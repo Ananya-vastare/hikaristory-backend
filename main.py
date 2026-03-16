@@ -17,7 +17,7 @@ import traceback
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-HF_TOKEN = os.getenv("ACESS_TOKEN")
+HF_TOKEN = os.getenv("ACCESS_TOKEN")
 
 if not GEMINI_API_KEY:
     raise Exception("Missing GEMINI_API_KEY")

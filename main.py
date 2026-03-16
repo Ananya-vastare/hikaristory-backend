@@ -26,9 +26,9 @@ hf_client = InferenceClient(api_key=HF_API_KEY) if HF_API_KEY else None
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 
-# -------------------------------
-# Dialogue Bubble
-# -------------------------------
+# -----------------------------
+# Add Dialogue Bubble
+# -----------------------------
 def add_dialogue(image: Image.Image, text: str):
 
     draw = ImageDraw.Draw(image)
@@ -38,10 +38,8 @@ def add_dialogue(image: Image.Image, text: str):
     except:
         font = ImageFont.load_default()
 
-    bubble_x = 30
-    bubble_y = 30
-    bubble_width = 450
-    bubble_height = 200
+    bubble_x, bubble_y = 40, 40
+    bubble_width, bubble_height = 480, 200
 
     draw.rectangle(
         [bubble_x, bubble_y, bubble_x + bubble_width, bubble_y + bubble_height],
@@ -75,21 +73,20 @@ def add_dialogue(image: Image.Image, text: str):
     return image
 
 
-# -------------------------------
+# -----------------------------
 # Generate Story Panels
-# -------------------------------
+# -----------------------------
 def generate_story_panels(story):
 
     prompt = f"""
 You are a professional comic book writer.
 
-Create a coherent 4 panel comic.
+Create a 4 panel comic story.
 
 Rules:
-- same characters in all panels
-- cinematic storytelling
-- dialogue max 2 sentences
-- comic style narrative
+- Same characters across panels
+- Logical story progression
+- Dialogue max 2 sentences
 
 Return ONLY JSON:
 
@@ -130,19 +127,18 @@ Story idea:
         }
 
 
-# -------------------------------
-# Generate Single Comic Panel
-# -------------------------------
+# -----------------------------
+# Generate Comic Image
+# -----------------------------
 def generate_single_image(panel):
 
     prompt = f"""
-graphic novel comic panel,
-professional comic book illustration,
-bold ink lines,
+professional comic book panel,
+graphic novel illustration,
+bold ink outlines,
 dramatic shadows,
 cinematic lighting,
 highly detailed artwork,
-consistent characters,
 {panel['scene']}
 """
 
@@ -170,9 +166,9 @@ consistent characters,
         }
 
 
-# -------------------------------
-# Generate All Images
-# -------------------------------
+# -----------------------------
+# Generate All Panels
+# -----------------------------
 def generate_images(panels):
 
     images = []
@@ -196,9 +192,9 @@ def generate_images(panels):
     return images, None
 
 
-# -------------------------------
+# -----------------------------
 # API Endpoint
-# -------------------------------
+# -----------------------------
 @app.route("/output", methods=["POST"])
 def generate_comic():
 
@@ -208,7 +204,7 @@ def generate_comic():
         story = data.get("text", "")
 
         if not story:
-            return jsonify({"error": "Story text missing"}), 400
+            return jsonify({"error": "No story provided"}), 400
 
         panels, err = generate_story_panels(story)
 
@@ -234,9 +230,9 @@ def generate_comic():
         }), 500
 
 
-# -------------------------------
+# -----------------------------
 # Health Check
-# -------------------------------
+# -----------------------------
 @app.route("/")
 def health():
 
@@ -247,9 +243,9 @@ def health():
     }
 
 
-# -------------------------------
+# -----------------------------
 # Run Server
-# -------------------------------
+# -----------------------------
 if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 8080))

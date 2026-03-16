@@ -4,245 +4,226 @@ from huggingface_hub import InferenceClient
 from google import genai
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
+from dotenv import load_dotenv
 import base64
 import json
 import os
 import logging
-import concurrent.futures
 import traceback
-from dotenv import load_dotenv
+import concurrent.futures
 
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
+
 HF_API_KEY = os.getenv("ACCESS_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-logging.info(f"HuggingFace key loaded: {bool(HF_API_KEY)}")
-logging.info(f"Gemini key loaded: {bool(GEMINI_API_KEY)}")
+
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
+CORS(app)
+
 hf_client = InferenceClient(api_key=HF_API_KEY) if HF_API_KEY else None
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 
-def add_dialogue(image: Image.Image, text: str) -> Image.Image:
+def draw_speech_bubble(image: Image.Image, text: str):
+
     draw = ImageDraw.Draw(image)
+
     try:
-        font = ImageFont.truetype("arial.ttf", 28)
+        font = ImageFont.truetype("arial.ttf", 22)
     except:
         font = ImageFont.load_default()
 
-    bubble_x, bubble_y = 40, 40
-    bubble_width, bubble_height = 300, 200
+    max_width = 300
+    padding = 14
+    line_height = 26
 
-    draw.rectangle(
-        [bubble_x, bubble_y, bubble_x + bubble_width, bubble_y + bubble_height],
-        fill="white",
-        outline="black",
-        width=4,
-    )
-
+    # wrap text
     words = text.split()
     lines = []
-    current_line = ""
+    current = ""
 
     for word in words:
-        test_line = f"{current_line} {word}".strip()
-        bbox = draw.textbbox((0, 0), test_line, font=font)
-        if bbox[2] - bbox[0] < bubble_width - 40:
-            current_line = test_line
-        else:
-            lines.append(current_line)
-            current_line = word
-    if current_line:
-        lines.append(current_line)
+        test = f"{current} {word}".strip()
+        bbox = draw.textbbox((0, 0), test, font=font)
 
-    y = bubble_y + 20
+        if bbox[2] <= max_width:
+            current = test
+        else:
+            lines.append(current)
+            current = word
+
+    if current:
+        lines.append(current)
+
+    # calculate bubble size
+    text_width = max(draw.textbbox((0, 0), l, font=font)[2] for l in lines)
+    bubble_width = text_width + padding * 2
+    bubble_height = len(lines) * line_height + padding * 2
+
+    x = 30
+    y = 30
+
+    # bubble
+    draw.rounded_rectangle(
+        (x, y, x + bubble_width, y + bubble_height),
+        radius=18,
+        fill="white",
+        outline="black",
+        width=3
+    )
+
+    # speech tail
+    tail = [
+        (x + 70, y + bubble_height),
+        (x + 95, y + bubble_height),
+        (x + 80, y + bubble_height + 30)
+    ]
+    draw.polygon(tail, fill="white", outline="black")
+
+    # draw text
+    ty = y + padding
     for line in lines:
-        draw.text((bubble_x + 15, y), line, fill="black", font=font)
-        y += 32
+        draw.text((x + padding, ty), line, fill="black", font=font)
+        ty += line_height
 
     return image
 
 
 def generate_story_panels(story_text):
+
     if not gemini_client:
-        return None, {
-            "status": "error",
-            "source": "Gemini",
-            "error": "GEMINI_CLIENT_NOT_INITIALIZED",
-            "message": "Gemini client is not initialized.",
-        }
+        raise RuntimeError("Gemini client not initialized")
 
     prompt = f"""
-You are a professional comic writer.
-Create a coherent 4-panel comic story.
+Create a 4 panel comic story.
+
 Rules:
-- Same characters across panels
-- Story progresses logically
-- Dialogue max 2 sentences
+- Same characters in all panels
+- Story must progress logically
+- Dialogue max 1 sentence
 - Return ONLY JSON
 
 Format:
 {{
- "panels":[
-  {{"scene":"visual description","dialogue":"character dialogue"}},
-  {{"scene":"visual description","dialogue":"character dialogue"}},
-  {{"scene":"visual description","dialogue":"character dialogue"}},
-  {{"scene":"visual description","dialogue":"character dialogue"}}
- ]
+"panels":[
+{{"scene":"visual description","dialogue":"speech"}},
+{{"scene":"visual description","dialogue":"speech"}},
+{{"scene":"visual description","dialogue":"speech"}},
+{{"scene":"visual description","dialogue":"speech"}}
+]
 }}
 
-Story Idea:
+Story idea:
 {story_text}
 """
-    try:
-        response = gemini_client.models.generate_content(
-            model="gemini-2.5-flash", contents=prompt
-        )
-        text = response.text.strip()
-        if "```" in text:
-            text = text.split("```")[1].replace("json", "").strip()
-        data = json.loads(text)
-        panels = data.get("panels", [])[:4]
-        return panels, None
-    except Exception as e:
-        tb = traceback.format_exc()
-        logging.error(
-            f"Gemini generation failed.\nError: {e}\nTraceback:\n{tb}\nInput: {story_text}"
-        )
-        return None, {
-            "status": "error",
-            "source": "Gemini",
-            "error": type(e).__name__,
-            "message": str(e),
-            "traceback": tb,
-            "input_preview": story_text[:100],
-        }
+
+    response = gemini_client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt
+    )
+
+    text = response.text.strip()
+
+    if "```" in text:
+        text = text.split("```")[1].replace("json", "").strip()
+
+    data = json.loads(text)
+
+    return data["panels"][:4]
 
 
-def generate_single_image(panel, style_map, style):
-    style_prompt = style_map.get(style, style_map["cartoonish"])
-    prompt = f"{style_prompt}, {panel['scene']}"
-    try:
-        image = hf_client.text_to_image(
-            prompt,
-            model="stabilityai/stable-diffusion-xl-base-1.0",
-            width=512,
-            height=512,
-        )
-        image = add_dialogue(image, panel["dialogue"])
-        buffer = BytesIO()
-        image.save(buffer, format="PNG")
-        img_base64 = base64.b64encode(buffer.getvalue()).decode()
-        return img_base64, None
-    except Exception as e:
-        tb = traceback.format_exc()
-        logging.error(
-            f"HuggingFace generation failed.\nError: {e}\nTraceback:\n{tb}\nPanel: {panel}"
-        )
-        return None, {
-            "status": "error",
-            "source": "HuggingFace",
-            "error": type(e).__name__,
-            "message": str(e),
-            "traceback": tb,
-            "panel_preview": panel,
-        }
+STYLE_MAP = {
+    "cartoonish": "comic book illustration, bold outlines, colorful",
+    "soft": "soft watercolor illustration",
+    "dramatic": "cinematic lighting dramatic illustration",
+    "manga": "black and white manga panel",
+    "pixel": "retro pixel art style"
+}
 
 
-def generate_images(panels, style="cartoonish"):
-    if not hf_client:
-        return None, {
-            "status": "error",
-            "source": "HuggingFace",
-            "error": "HF_CLIENT_NOT_INITIALIZED",
-            "message": "HuggingFace client is not initialized.",
-        }
+def generate_panel_image(panel, style):
 
-    style_map = {
-        "cartoonish": "comic book illustration, bold outlines, vibrant colors",
-        "soft": "soft watercolor illustration, gentle pastel colors",
-        "dramatic": "dramatic cinematic lighting, high contrast",
-        "pixel_art": "pixel art retro game style",
-        "manga": "manga style black and white comic",
-    }
+    prompt = f"{STYLE_MAP.get(style,'comic illustration')}, {panel['scene']}"
+
+    image = hf_client.text_to_image(
+        prompt,
+        model="stabilityai/stable-diffusion-xl-base-1.0",
+        width=512,
+        height=512
+    )
+
+    image = draw_speech_bubble(image, panel["dialogue"])
+
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
+def generate_images(panels, style):
 
     images = []
-    try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            futures = [
-                executor.submit(generate_single_image, panel, style_map, style)
-                for panel in panels
-            ]
-            for future in concurrent.futures.as_completed(futures):
-                img, img_error = future.result()
-                if img_error:
-                    # Return the first image generation error
-                    return None, img_error
-                images.append(img)
-        return images, None
-    except Exception as e:
-        tb = traceback.format_exc()
-        logging.error(
-            f"HuggingFace generation failed.\nError: {e}\nTraceback:\n{tb}\nPanels: {panels}"
-        )
-        return None, {
-            "status": "error",
-            "source": "HuggingFace",
-            "error": type(e).__name__,
-            "message": str(e),
-            "traceback": tb,
-            "panels_preview": panels[:2],
-        }
 
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+
+        futures = [
+            executor.submit(generate_panel_image, panel, style)
+            for panel in panels
+        ]
+
+        for f in futures:
+            images.append(f.result())
+
+    return images
 
 @app.route("/output", methods=["POST"])
 def generate_comic():
+
     try:
+
         data = request.json
         story = data.get("text", "")
         style = data.get("image_style", "cartoonish")
 
         if not story:
-            return jsonify({"status": "error", "message": "No storyline provided"}), 400
+            return jsonify({"error": "Story text missing"}), 400
 
-        panels, gemini_error = generate_story_panels(story)
-        if gemini_error:
-            return jsonify(gemini_error), 500
+        panels = generate_story_panels(story)
 
-        images, hf_error = generate_images(panels, style)
-        if hf_error:
-            return jsonify(hf_error), 500
+        images = generate_images(panels, style)
 
-        return jsonify({"status": "success", "panels": panels, "images": images})
+        return jsonify({
+            "status": "success",
+            "panels": panels,
+            "images": images
+        })
 
     except Exception as e:
-        tb = traceback.format_exc()
-        logging.exception("SERVER ERROR")
-        return (
-            jsonify(
-                {
-                    "status": "error",
-                    "source": "Server",
-                    "error": type(e).__name__,
-                    "message": str(e),
-                    "traceback": tb,
-                }
-            ),
-            500,
-        )
 
+        logging.error(traceback.format_exc())
+
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
 
 @app.route("/", methods=["GET"])
 def health():
+
     return {
-        "message": "Comic backend running",
-        "HF_API_KEY_loaded": bool(HF_API_KEY),
-        "GEMINI_API_KEY_loaded": bool(GEMINI_API_KEY),
+        "service": "Comic Generator Backend",
+        "huggingface_loaded": bool(HF_API_KEY),
+        "gemini_loaded": bool(GEMINI_API_KEY)
     }
 
-
 if __name__ == "__main__":
+
     port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+
+    app.run(
+        host="0.0.0.0",
+        port=port,
+        debug=True
+    )

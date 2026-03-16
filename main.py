@@ -33,7 +33,7 @@ def add_dialogue(image: Image.Image, text: str) -> Image.Image:
         font = ImageFont.load_default()
 
     bubble_x, bubble_y = 40, 40
-    bubble_width, bubble_height = 500, 210
+    bubble_width, bubble_height = 300, 200
 
     draw.rectangle(
         [bubble_x, bubble_y, bubble_x + bubble_width, bubble_y + bubble_height],

@@ -5,8 +5,3 @@ python-dotenv
 requests
 pillow
 google-genai
-torch
-diffusers
-transformers
-accelerate
-safetensors

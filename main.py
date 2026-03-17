@@ -151,7 +151,7 @@ professional, cinematic, consistent character design,
         image_bytes = hf_client.text_to_image(
             prompt=prompt,
             negative_prompt="blurry, distorted, bad anatomy",
-            model="stabilityai/stable-diffusion-xl-1024-v1-0",
+            model="stabilityai/stable-diffusion-xl-base-1.0",
             width=width,
             height=height,
         )

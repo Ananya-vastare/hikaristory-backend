@@ -172,8 +172,8 @@ Scene: {panel['scene']}
             prompt=prompt,
             negative_prompt="blurry, distorted, bad anatomy",
             model="stabilityai/stable-diffusion-xl-base-1.0",
-            width=1024,
-            height=1024
+            width=800,
+            height=800
         )
     except Exception as e:
         logging.warning(f"Primary model failed, retrying: {str(e)}")

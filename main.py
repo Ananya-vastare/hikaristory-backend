@@ -170,8 +170,8 @@ consistent character design,
                 prompt=prompt,
                 negative_prompt="blurry, distorted",
                 model="stabilityai/stable-diffusion-xl-base-1.0",
-                width=1024,
-                height=1024,
+                width=600,
+                height=600,
             )
         except Exception as e2:
             logging.error(f"HF error: {str(e2)}")

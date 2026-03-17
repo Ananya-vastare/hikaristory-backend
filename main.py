@@ -84,7 +84,7 @@ def add_dialogue(image: Image.Image, dialogue: str) -> Image.Image:
     tail_y0 = bubble_y1
     draw.polygon([(tail_x0, tail_y0),
                   (tail_x0 + tail_width, tail_y0),
-                  (tail_x0 + tail_width//2, tail_y0 + tail_height)],
+                  (tail_x0 + tail_width // 2, tail_y0 + tail_height)],
                  fill="white", outline="black")
 
     y = bubble_y0 + padding
@@ -152,22 +152,17 @@ professional, cinematic, consistent character design,
 {panel.get('scene', '')}
 """
     try:
-        try:
-            image_bytes = hf_client.text_to_image(
-                prompt=prompt,
-                negative_prompt="blurry, distorted, bad anatomy",
-                model="prompthero/openjourney",
-                width=width,
-                height=height,
-            )
-        except StopIteration:
-            raise RuntimeError("Hugging Face model returned no output (StopIteration)")
-
+        image_bytes = hf_client.text_to_image(
+            prompt=prompt,
+            negative_prompt="blurry, distorted, bad anatomy",
+            model="prompthero/openjourney",
+            width=width,
+            height=height,
+        )
         if isinstance(image_bytes, bytes):
             image = Image.open(BytesIO(image_bytes))
         else:
             raise RuntimeError("Unexpected Hugging Face response format")
-
     except Exception as e:
         msg = str(e) or repr(e)
         logging.error(f"Hugging Face error: {msg}")

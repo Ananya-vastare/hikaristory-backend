@@ -32,45 +32,72 @@ FIXED_ART_PROMPT = (
 
 
 def add_dialogue_bubble(image: Image.Image, dialogue: str) -> Image.Image:
-    """Optional subtle dialogue bubble."""
     if not dialogue:
         return image
+
     draw = ImageDraw.Draw(image)
+
+    # BIGGER FONT
     try:
-        font = ImageFont.truetype("arial.ttf", 40)
+        font = ImageFont.truetype("arial.ttf", 60)  # increased from 40 → 60
     except:
         font = ImageFont.load_default()
 
     words = dialogue.split()
-    lines, current = [], ""
-    max_width = 400
+    lines = []
+    current = ""
+
+    max_width = 700  # increased width
+
+    # Wrap text
     for word in words:
         test = f"{current} {word}".strip() if current else word
         bbox = draw.textbbox((0, 0), test, font=font)
-        if bbox[2] - bbox[0] < max_width:
+
+        if bbox[2] - bbox[0] <= max_width:
             current = test
         else:
             lines.append(current)
             current = word
+
     if current:
         lines.append(current)
 
-    bubble_width = max(draw.textbbox((0, 0), line, font=font)[2] for line in lines) + 20
-    bubble_height = len(lines) * 28 + 20
-    bubble_x, bubble_y = 20, 20
+    # BIGGER PADDING + SPACING
+    line_height = 70
+    padding = 30
 
-    # Semi-transparent, subtle, cinematic dialogue bubble
+    bubble_width = max(
+        draw.textbbox((0, 0), line, font=font)[2] for line in lines
+    ) + padding * 2
+
+    bubble_height = len(lines) * line_height + padding * 2
+
+    bubble_x, bubble_y = 30, 30
+
+    # STRONGER BACKGROUND (more visible)
     draw.rectangle(
-        [bubble_x, bubble_y, bubble_x + bubble_width, bubble_y + bubble_height],
-        fill=(255, 255, 255, 180),
-        outline=(50, 50, 50),
-        width=2,
+        [
+            bubble_x,
+            bubble_y,
+            bubble_x + bubble_width,
+            bubble_y + bubble_height,
+        ],
+        fill=(255, 255, 255, 230),  # more solid white
+        outline=(0, 0, 0),
+        width=4,
     )
 
-    y = bubble_y + 5
+    # Draw text
+    y = bubble_y + padding
     for line in lines:
-        draw.text((bubble_x + 10, y), line, fill="black", font=font)
-        y += 28
+        draw.text(
+            (bubble_x + padding, y),
+            line,
+            fill=(0, 0, 0),
+            font=font,
+        )
+        y += line_height
 
     return image
 

@@ -270,8 +270,3 @@ def generate_comic():
             "message": str(e)
         }), 500
 
-# ----------------------------
-# ▶️ RUN SERVER
-# ----------------------------
-if __name__ == "__main__":
-    app.run(debug=True, port=5000)

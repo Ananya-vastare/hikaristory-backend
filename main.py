@@ -23,7 +23,7 @@ CORS(app)
 hf_client = InferenceClient(api_key=HF_API_KEY) if HF_API_KEY else None
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-
+# ================== UTILITIES ==================
 def encode_image(image: Image.Image) -> str:
     buffer = BytesIO()
     image.save(buffer, format="PNG")
@@ -33,61 +33,57 @@ def encode_image(image: Image.Image) -> str:
 def add_dialogue(image: Image.Image, text: str) -> Image.Image:
     draw = ImageDraw.Draw(image)
 
+    # Font size scales with image width
+    font_size = max(40, image.width // 15)  # e.g., 1024px → ~68px
     try:
-        font = ImageFont.truetype("arial.ttf", 50)
+        font = ImageFont.truetype("arial.ttf", font_size)
     except:
         font = ImageFont.load_default()
 
-    # Bubble position (top area like comics)
     padding = 20
     max_width = image.width - 200
 
+    # Wrap text into multiple lines
     words = text.split()
     lines = []
     current = ""
-
     for word in words:
         test = f"{current} {word}".strip()
         bbox = draw.textbbox((0, 0), test, font=font)
-
         if bbox[2] < max_width:
             current = test
         else:
             lines.append(current)
             current = word
-
     if current:
         lines.append(current)
 
-    text_height = len(lines) * 40 + padding * 2
+    # Calculate dynamic text height
+    line_height = font.getbbox("A")[3] - font.getbbox("A")[1]
+    text_height = len(lines) * line_height + padding * 2
 
-    # Speech bubble (top)
-    box = [
-        100,
-        50,
-        image.width - 100,
-        50 + text_height,
-    ]
+    # Bubble coordinates
+    box = [100, 50, image.width - 100, 50 + text_height]
 
-    # Bubble
+    # Draw ellipse bubble
     draw.ellipse(box, fill="white", outline="black", width=3)
 
-    # Tail (speech pointer)
+    # Draw speech tail
     draw.polygon(
         [(box[0] + 100, box[3]), (box[0] + 150, box[3]), (box[0] + 120, box[3] + 40)],
         fill="white",
-        outline="black",
+        outline="black"
     )
 
-    # Text
+    # Draw text
     y = box[1] + padding
     for line in lines:
         draw.text((box[0] + padding, y), line, fill="black", font=font)
-        y += 40
+        y += line_height
 
     return image
 
-
+# ================== STORY GENERATION ==================
 def generate_story(story_text):
     if not gemini_client:
         return None, "Gemini API key missing"
@@ -105,10 +101,7 @@ Rules:
 Format:
 {{
  "panels":[
-   {{"scene":"...", "dialogue":"..."}},
-   {{"scene":"...", "dialogue":"..."}},
-   {{"scene":"...", "dialogue":"..."}},
-   {{"scene":"...", "dialogue":"..."}}
+   {{"scene":"...", "dialogue":"..."}} × 4
  ]
 }}
 
@@ -119,23 +112,17 @@ Story: {story_text}
         res = gemini_client.models.generate_content(
             model="gemini-2.5-flash", contents=prompt
         )
-
         text = res.text.strip()
-
         if "```" in text:
             text = text.split("```")[1].replace("json", "").strip()
-
         data = json.loads(text)
         return data["panels"], None
-
     except Exception as e:
         logging.error(f"Gemini error: {str(e)}")
         return None, "Story generation failed"
 
-
-# ================== IMAGE ==================
+# ================== IMAGE GENERATION ==================
 def generate_image(panel, style):
-
     if not hf_client:
         return None, "HuggingFace API key missing"
 
@@ -159,31 +146,29 @@ consistent character design,
             negative_prompt="blurry, distorted, bad anatomy",
             model="stabilityai/stable-diffusion-xl-base-1.0",
             width=1024,
-            height=1024,
+            height=1024
         )
-
     except Exception as e:
-        logging.warning("Turbo failed → fallback SDXL")
-
+        logging.warning("Primary model failed, retrying SDXL")
         try:
             image = hf_client.text_to_image(
                 prompt=prompt,
                 negative_prompt="blurry, distorted",
                 model="stabilityai/stable-diffusion-xl-base-1.0",
                 width=1024,
-                height=1024,
+                height=1024
             )
         except Exception as e2:
-            logging.error(f"HF error: {str(e2)}")
+            logging.error(f"HuggingFace error: {str(e2)}")
             return None, "Image generation failed"
 
+    # Add dialogue
     try:
         image = add_dialogue(image, panel["dialogue"])
-    except:
-        pass
+    except Exception as e:
+        logging.warning(f"Failed to add dialogue: {str(e)}")
 
     return encode_image(image), None
-
 
 # ================== PIPELINE ==================
 def generate_comic_pipeline(story, style):
@@ -192,18 +177,14 @@ def generate_comic_pipeline(story, style):
         return None, err
 
     images = []
-
     for panel in panels:
-        logging.info(f"Generating: {panel['scene'][:40]}")
-
+        logging.info(f"Generating image: {panel['scene'][:40]}...")
         img, err = generate_image(panel, style)
         if err:
             return None, err
-
         images.append(img)
 
     return {"panels": panels, "images": images}, None
-
 
 # ================== ROUTES ==================
 @app.route("/output", methods=["POST"])
@@ -217,26 +198,21 @@ def output():
             return jsonify({"status": "error", "message": "No story provided"}), 400
 
         result, err = generate_comic_pipeline(story, style)
-
         if err:
             return jsonify({"status": "error", "message": err}), 500
 
         return jsonify({"status": "success", **result})
-
     except Exception as e:
         logging.exception("SERVER ERROR")
-
         return jsonify({"status": "error", "message": "Internal server error"}), 500
-
 
 @app.route("/")
 def health():
     return {
         "status": "running",
         "hf_loaded": bool(HF_API_KEY),
-        "gemini_loaded": bool(GEMINI_API_KEY),
+        "gemini_loaded": bool(GEMINI_API_KEY)
     }
-
 
 # ================== RUN ==================
 if __name__ == "__main__":

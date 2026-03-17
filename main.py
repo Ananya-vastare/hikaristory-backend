@@ -2,218 +2,167 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from huggingface_hub import InferenceClient
 from google import genai
+from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 import base64
 import json
 import os
-import logging
-import traceback
-from dotenv import load_dotenv
 
-# ================== SETUP ==================
+# Load environment variables
 load_dotenv()
-logging.basicConfig(level=logging.INFO)
-
 HF_API_KEY = os.getenv("ACCESS_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+if not HF_API_KEY or not GEMINI_API_KEY:
+    raise Exception("Missing API keys in .env")
 
 app = Flask(__name__)
 CORS(app)
 
-# ================== CLIENT INITIALIZATION ==================
-hf_client = None
-gemini_client = None
+hf_client = InferenceClient(api_key=HF_API_KEY)
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
-if HF_API_KEY:
+# Premium animated style prompt
+FIXED_ART_PROMPT = (
+    "ultra-detailed, premium animated movie still, cinematic lighting, "
+    "dynamic poses, dramatic shadows, depth of field, high resolution, vibrant colors, "
+    "soft lighting, realistic textures, anime-inspired but photorealistic, studio-quality render"
+)
+
+
+def add_dialogue_bubble(image: Image.Image, dialogue: str) -> Image.Image:
+    """Optional subtle dialogue bubble."""
+    if not dialogue:
+        return image
+    draw = ImageDraw.Draw(image)
     try:
-        hf_client = InferenceClient(api_key=HF_API_KEY)
-        logging.info("Hugging Face client initialized")
-    except Exception as e:
-        logging.error(f"Failed to initialize Hugging Face client: {e}")
+        font = ImageFont.truetype("arial.ttf", 22)
+    except:
+        font = ImageFont.load_default()
 
-if GEMINI_API_KEY:
-    try:
-        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-        logging.info("Gemini client initialized")
-    except Exception as e:
-        logging.error(f"Failed to initialize Gemini client: {e}")
-
-# ================== UTILITIES ==================
-def encode_image(image: Image.Image) -> str:
-    buffer = BytesIO()
-    image.save(buffer, format="PNG")
-    return base64.b64encode(buffer.getvalue()).decode()
-
-def wrap_text(draw, text, font, max_width):
-    words = text.split()
+    words = dialogue.split()
     lines, current = [], ""
+    max_width = 400
     for word in words:
-        test = f"{current} {word}".strip()
+        test = f"{current} {word}".strip() if current else word
         bbox = draw.textbbox((0, 0), test, font=font)
-        if bbox[2] < max_width:
+        if bbox[2] - bbox[0] < max_width:
             current = test
         else:
             lines.append(current)
             current = word
     if current:
         lines.append(current)
-    return lines
 
-def add_dialogue(image: Image.Image, dialogue: str) -> Image.Image:
-    draw = ImageDraw.Draw(image)
-    padding = 10
-    max_width = image.width - 60
-    try:
-        font = ImageFont.truetype("arial.ttf", 24)
-    except:
-        font = ImageFont.load_default()
+    bubble_width = max(draw.textbbox((0, 0), line, font=font)[2] for line in lines) + 20
+    bubble_height = len(lines) * 28 + 20
+    bubble_x, bubble_y = 20, 20
 
-    lines = wrap_text(draw, dialogue, font, max_width)
-    line_height = font.getbbox("A")[3] - font.getbbox("A")[1]
-    text_height = len(lines) * (line_height + 3) + padding * 2
+    # Semi-transparent, subtle, cinematic dialogue bubble
+    draw.rectangle(
+        [bubble_x, bubble_y, bubble_x + bubble_width, bubble_y + bubble_height],
+        fill=(255, 255, 255, 180),
+        outline=(50, 50, 50),
+        width=2,
+    )
 
-    bubble_x0, bubble_y0 = 30, 30
-    bubble_x1 = bubble_x0 + max([draw.textbbox((0,0), line, font=font)[2] for line in lines]) + padding*2
-    bubble_y1 = bubble_y0 + text_height
-
-    draw.rounded_rectangle([bubble_x0, bubble_y0, bubble_x1, bubble_y1],
-                           radius=15, fill="white", outline="black", width=2)
-    tail_width, tail_height = 25, 15
-    tail_x0 = bubble_x0 + bubble_x1 // 4
-    tail_y0 = bubble_y1
-    draw.polygon([(tail_x0, tail_y0),
-                  (tail_x0 + tail_width, tail_y0),
-                  (tail_x0 + tail_width // 2, tail_y0 + tail_height)],
-                 fill="white", outline="black")
-
-    y = bubble_y0 + padding
+    y = bubble_y + 5
     for line in lines:
-        draw.text((bubble_x0 + padding, y), line, fill="black", font=font)
-        y += line_height + 3
+        draw.text((bubble_x + 10, y), line, fill="black", font=font)
+        y += 28
 
     return image
 
-# ================== STORY GENERATION ==================
-def generate_story(story_text):
-    if not gemini_client:
-        raise RuntimeError("Gemini client not initialized or GEMINI_API_KEY missing")
 
+def generate_story_panels(story: str):
+    """Generate 4-panel cinematic animated story with scene + dialogue."""
     prompt = f"""
-Create a 4-panel comic.
-
+You are a professional animated movie concept artist and writer.
+Create a coherent 4-panel cinematic animated story.
 Rules:
-- Same character in all panels
-- Describe character in EACH panel
-- Cinematic scenes
-- Dialogue = 1 short sentence
-- Return ONLY JSON
-
-Format:
+- All panels follow same main characters.
+- Each panel advances the story logically.
+- Each panel must include:
+    1) Scene: detailed animated movie still description
+    2) Dialogue: 1-2 sentences characters speak
+Return JSON only:
 {{
  "panels":[
-   {{"scene":"...", "dialogue":"..."}} x4
+  {{"scene":"description","dialogue":"text"}},
+  {{"scene":"description","dialogue":"text"}},
+  {{"scene":"description","dialogue":"text"}},
+  {{"scene":"description","dialogue":"text"}}
  ]
 }}
-
-Story: {story_text}
+Story Idea:
+{story}
 """
     try:
-        res = gemini_client.models.generate_content(
+        response = gemini_client.models.generate_content(
             model="gemini-2.5-flash", contents=prompt
         )
-        text = res.text.strip()
+        text = response.text.strip()
         if "```" in text:
             text = text.split("```")[1].replace("json", "").strip()
         data = json.loads(text)
-        if "panels" not in data or not isinstance(data["panels"], list):
-            raise ValueError("Invalid response structure from Gemini")
-        return data["panels"]
+        return data["panels"][:4], None
     except Exception as e:
-        logging.error(f"Gemini story generation failed: {e}")
-        raise RuntimeError(f"Story generation failed: {str(e)}") from e
+        print("GEMINI ERROR:", e)
+        return None, "GEMINI_GENERATION_ERROR"
 
-# ================== IMAGE GENERATION ==================
-def generate_image(panel, style):
-    if not hf_client:
-        return {"error": "Hugging Face client not initialized or ACCESS_TOKEN missing"}, 500
 
-    width, height = 512, 512  # Free model resolution
-    STYLE_MAP = {
-        "cartoonish": "modern comic, bold outlines, vibrant cinematic lighting, highly detailed",
-        "soft": "watercolor illustration, pastel tones, highly detailed",
-        "dramatic": "cinematic lighting, high contrast shadows, highly detailed",
-        "manga": "black and white manga panel, screentones, highly detailed",
-    }
-
-    prompt = f"""
-{STYLE_MAP.get(style, STYLE_MAP['cartoonish'])},
-professional, cinematic, consistent character design,
-{panel.get('scene', '')}
-"""
-    try:
-        image_bytes = hf_client.text_to_image(
-            prompt=prompt,
-            negative_prompt="blurry, distorted, bad anatomy",
-            model="prompthero/openjourney",
-            width=width,
-            height=height,
-        )
-        if isinstance(image_bytes, bytes):
-            image = Image.open(BytesIO(image_bytes))
-        else:
-            raise RuntimeError("Unexpected Hugging Face response format")
-    except Exception as e:
-        msg = str(e) or repr(e)
-        logging.error(f"Hugging Face error: {msg}")
-        return {"error": msg}, 500
-
-    try:
-        return encode_image(add_dialogue(image, panel.get("dialogue", ""))), 200
-    except Exception as e:
-        logging.error(f"Dialogue overlay failed: {e}")
-        return {"error": str(e)}, 500
-
-# ================== PIPELINE ==================
-def generate_comic_pipeline(story, style):
-    panels = generate_story(story)
+def generate_panel_images(panels: list):
+    """Generate high-resolution animated-style images with optional dialogue."""
     images = []
-    for idx, panel in enumerate(panels, start=1):
-        img_result, status = generate_image(panel, style)
-        if status != 200:
-            return {"status": "error", "message": img_result.get("error")}, status
-        images.append(img_result)
-    return {"status": "success", "panels": panels, "images": images}, 200
-
-# ================== ROUTES ==================
-@app.route("/output", methods=["POST"])
-def output():
-    data = request.json
-    story = data.get("text", "").strip()
-    style = data.get("image_style", "cartoonish")
-
-    if not story:
-        return jsonify({"status": "error", "message": "No story provided"}), 400
-
     try:
-        result, status = generate_comic_pipeline(story, style)
-        return jsonify(result), status
-    except Exception as e:
-        tb = traceback.format_exc()
-        logging.error(f"Unexpected server error:\n{tb}")
-        return jsonify({
-            "status": "error",
-            "message": str(e) or "Unknown error occurred",
-            "trace": tb
-        }), 500
+        for panel in panels:
+            prompt = f"{FIXED_ART_PROMPT}, {panel.get('scene','')}"
+            image = hf_client.text_to_image(
+                prompt,
+                model="stabilityai/stable-diffusion-xl-base-1.0",
+                width=1024,  # high-res for premium quality
+                height=1024,
+                guidance_scale=15.0,
+                num_inference_steps=150,
+            )
 
-@app.route("/")
-def health():
-    return {
-        "status": "running",
-        "hf_loaded": hf_client is not None,
-        "gemini_loaded": gemini_client is not None,
-    }
+            # Optional dialogue bubble
+            image = add_dialogue_bubble(image, panel.get("dialogue", ""))
+
+            buffer = BytesIO()
+            image.save(buffer, format="PNG")
+            images.append(base64.b64encode(buffer.getvalue()).decode())
+        return images, None
+    except Exception as e:
+        print("HF ERROR:", e)
+        return None, "HF_GENERATION_ERROR"
+
+
+@app.route("/output", methods=["POST"])
+def generate_comic():
+    data = request.json
+    story = data.get("text", "")
+    if not story:
+        return jsonify({"status": "error", "message": "No storyline provided"}), 400
+
+    panels, gem_error = generate_story_panels(story)
+    if gem_error:
+        return jsonify({"status": "error", "source": "Gemini", "error": gem_error}), 500
+
+    images, hf_error = generate_panel_images(panels)
+    if hf_error:
+        return (
+            jsonify({"status": "error", "source": "HuggingFace", "error": hf_error}),
+            500,
+        )
+
+    result = [
+        {"scene": p["scene"], "dialogue": p["dialogue"], "image": img}
+        for p, img in zip(panels, images)
+    ]
+    return jsonify({"status": "success", "panels": result})
+
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(debug=True, port=5000)

@@ -37,7 +37,7 @@ def add_dialogue_bubble(image: Image.Image, dialogue: str) -> Image.Image:
         return image
     draw = ImageDraw.Draw(image)
     try:
-        font = ImageFont.truetype("arial.ttf", 22)
+        font = ImageFont.truetype("arial.ttf", 40)
     except:
         font = ImageFont.load_default()
 

@@ -20,7 +20,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 app = Flask(__name__)
 CORS(app)
 
-# Initialize clients
+# ================== CLIENT INITIALIZATION ==================
 hf_client = None
 gemini_client = None
 
@@ -44,8 +44,7 @@ def encode_image(image: Image.Image) -> str:
 
 def wrap_text(draw, text, font, max_width):
     words = text.split()
-    lines = []
-    current = ""
+    lines, current = [], ""
     for word in words:
         test = f"{current} {word}".strip()
         bbox = draw.textbbox((0, 0), test, font=font)
@@ -62,7 +61,6 @@ def add_dialogue(image: Image.Image, dialogue: str) -> Image.Image:
     draw = ImageDraw.Draw(image)
     padding = 10
     max_width = image.width - 60
-
     try:
         font = ImageFont.truetype("arial.ttf", 24)
     except:
@@ -70,23 +68,23 @@ def add_dialogue(image: Image.Image, dialogue: str) -> Image.Image:
 
     lines = wrap_text(draw, dialogue, font, max_width)
     line_height = font.getbbox("A")[3] - font.getbbox("A")[1]
-    text_height = len(lines) * (line_height + 3) + padding*2
+    text_height = len(lines) * (line_height + 3) + padding * 2
 
     bubble_x0, bubble_y0 = 30, 30
-    bubble_x1 = bubble_x0 + max([draw.textbbox((0,0), line, font=font)[2] for line in lines]) + padding*2
+    bubble_x1 = bubble_x0 + max([draw.textbbox((0, 0), line, font=font)[2] for line in lines]) + padding*2
     bubble_y1 = bubble_y0 + text_height
 
     # Draw bubble
     draw.rounded_rectangle([bubble_x0, bubble_y0, bubble_x1, bubble_y1],
                            radius=15, fill="white", outline="black", width=2)
 
-    # Bubble tail
+    # Draw bubble tail
     tail_width, tail_height = 25, 15
     tail_x0 = bubble_x0 + bubble_x1 // 4
     tail_y0 = bubble_y1
     draw.polygon([(tail_x0, tail_y0),
                   (tail_x0 + tail_width, tail_y0),
-                  (tail_x0 + tail_width//2, tail_y0 + tail_height)],
+                  (tail_x0 + tail_width // 2, tail_y0 + tail_height)],
                  fill="white", outline="black")
 
     # Draw text
@@ -139,9 +137,9 @@ Story: {story_text}
 # ================== IMAGE GENERATION ==================
 def generate_image(panel, style):
     if not hf_client:
-        raise RuntimeError("Hugging Face client not initialized or ACCESS_TOKEN missing")
+        return {"error": "Hugging Face client not initialized or ACCESS_TOKEN missing"}, 500
 
-    width, height = 768, 512  # smaller size for faster response & lower payload
+    width, height = 768, 512
     STYLE_MAP = {
         "cartoonish": "modern comic, bold outlines, vibrant cinematic lighting, highly detailed",
         "soft": "watercolor illustration, pastel tones, highly detailed",
@@ -152,9 +150,8 @@ def generate_image(panel, style):
     prompt = f"""
 {STYLE_MAP.get(style, STYLE_MAP['cartoonish'])},
 professional, cinematic, consistent character design,
-{panel.get('scene','')}
+{panel.get('scene', '')}
 """
-
     try:
         image_bytes = hf_client.text_to_image(
             prompt=prompt,
@@ -162,8 +159,6 @@ professional, cinematic, consistent character design,
             model="stabilityai/stable-diffusion-xl-refiner-1.0",
             width=width,
             height=height,
-            steps=40,
-            guidance_scale=12
         )
         if isinstance(image_bytes, bytes):
             image = Image.open(BytesIO(image_bytes))
@@ -171,16 +166,16 @@ professional, cinematic, consistent character design,
             raise ValueError("Unexpected Hugging Face response format")
     except Exception as e:
         logging.error(f"Hugging Face image generation failed: {e}")
-        # Detect payment issues
-        if "402" in str(e) or "Payment Required" in str(e):
-            raise RuntimeError("Hugging Face account has depleted credits. Upgrade or buy more.")
-        raise RuntimeError(f"Image generation failed: {str(e)}") from e
+        msg = str(e)
+        if "402" in msg or "Payment Required" in msg:
+            return {"error": "Hugging Face account has depleted credits. Upgrade or buy more."}, 402
+        return {"error": f"Image generation failed: {msg}"}, 500
 
     try:
-        return encode_image(add_dialogue(image, panel.get("dialogue", "")))
+        return encode_image(add_dialogue(image, panel.get("dialogue", ""))), 200
     except Exception as e:
         logging.error(f"Adding dialogue failed: {e}")
-        raise RuntimeError(f"Dialogue overlay failed: {str(e)}") from e
+        return {"error": f"Dialogue overlay failed: {str(e)}"}, 500
 
 # ================== PIPELINE ==================
 def generate_comic_pipeline(story, style):
@@ -188,27 +183,26 @@ def generate_comic_pipeline(story, style):
     images = []
 
     for idx, panel in enumerate(panels, start=1):
-        logging.info(f"Generating panel {idx}: {panel.get('scene','')[:40]}...")
-        images.append(generate_image(panel, style))
+        img_result, status = generate_image(panel, style)
+        if status != 200:
+            return {"status": "error", "message": img_result.get("error", "Unknown error")}, status
+        images.append(img_result)
 
-    return {"panels": panels, "images": images}
+    return {"status": "success", "panels": panels, "images": images}, 200
 
 # ================== ROUTES ==================
 @app.route("/output", methods=["POST"])
 def output():
+    data = request.json
+    story = data.get("text", "").strip()
+    style = data.get("image_style", "cartoonish")
+
+    if not story:
+        return jsonify({"status": "error", "message": "No story provided"}), 400
+
     try:
-        data = request.json
-        story = data.get("text", "").strip()
-        style = data.get("image_style", "cartoonish")
-
-        if not story:
-            return jsonify({"status": "error", "message": "No story provided"}), 400
-
-        result = generate_comic_pipeline(story, style)
-        return jsonify({"status": "success", **result})
-
-    except RuntimeError as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        result, status = generate_comic_pipeline(story, style)
+        return jsonify(result), status
     except Exception as e:
         logging.exception("Unexpected server error")
         return jsonify({"status": "error", "message": "Unexpected server error"}), 500

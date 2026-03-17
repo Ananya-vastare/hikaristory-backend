@@ -34,7 +34,7 @@ def add_dialogue(image: Image.Image, text: str) -> Image.Image:
     draw = ImageDraw.Draw(image)
 
     try:
-        font = ImageFont.truetype("arial.ttf", 32)
+        font = ImageFont.truetype("arial.ttf", 50)
     except:
         font = ImageFont.load_default()
 

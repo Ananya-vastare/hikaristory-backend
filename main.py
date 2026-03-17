@@ -8,6 +8,7 @@ import base64
 import json
 import os
 import logging
+import traceback
 from dotenv import load_dotenv
 
 # ================== SETUP ==================
@@ -27,12 +28,14 @@ gemini_client = None
 if HF_API_KEY:
     try:
         hf_client = InferenceClient(api_key=HF_API_KEY)
+        logging.info("Hugging Face client initialized")
     except Exception as e:
         logging.error(f"Failed to initialize Hugging Face client: {e}")
 
 if GEMINI_API_KEY:
     try:
         gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        logging.info("Gemini client initialized")
     except Exception as e:
         logging.error(f"Failed to initialize Gemini client: {e}")
 
@@ -71,7 +74,7 @@ def add_dialogue(image: Image.Image, dialogue: str) -> Image.Image:
     text_height = len(lines) * (line_height + 3) + padding * 2
 
     bubble_x0, bubble_y0 = 30, 30
-    bubble_x1 = bubble_x0 + max([draw.textbbox((0, 0), line, font=font)[2] for line in lines]) + padding*2
+    bubble_x1 = bubble_x0 + max([draw.textbbox((0,0), line, font=font)[2] for line in lines]) + padding*2
     bubble_y1 = bubble_y0 + text_height
 
     draw.rounded_rectangle([bubble_x0, bubble_y0, bubble_x1, bubble_y1],
@@ -81,8 +84,9 @@ def add_dialogue(image: Image.Image, dialogue: str) -> Image.Image:
     tail_y0 = bubble_y1
     draw.polygon([(tail_x0, tail_y0),
                   (tail_x0 + tail_width, tail_y0),
-                  (tail_x0 + tail_width // 2, tail_y0 + tail_height)],
+                  (tail_x0 + tail_width//2, tail_y0 + tail_height)],
                  fill="white", outline="black")
+
     y = bubble_y0 + padding
     for line in lines:
         draw.text((bubble_x0 + padding, y), line, fill="black", font=font)
@@ -134,7 +138,7 @@ def generate_image(panel, style):
     if not hf_client:
         return {"error": "Hugging Face client not initialized or ACCESS_TOKEN missing"}, 500
 
-    width, height = 512, 512  # Free resolution
+    width, height = 512, 512  # Free model resolution
     STYLE_MAP = {
         "cartoonish": "modern comic, bold outlines, vibrant cinematic lighting, highly detailed",
         "soft": "watercolor illustration, pastel tones, highly detailed",
@@ -148,18 +152,22 @@ professional, cinematic, consistent character design,
 {panel.get('scene', '')}
 """
     try:
-        # FREE Hugging Face model
-        image_bytes = hf_client.text_to_image(
-            prompt=prompt,
-            negative_prompt="blurry, distorted, bad anatomy",
-            model="prompthero/openjourney",
-            width=width,
-            height=height,
-        )
+        try:
+            image_bytes = hf_client.text_to_image(
+                prompt=prompt,
+                negative_prompt="blurry, distorted, bad anatomy",
+                model="prompthero/openjourney",
+                width=width,
+                height=height,
+            )
+        except StopIteration:
+            raise RuntimeError("Hugging Face model returned no output (StopIteration)")
+
         if isinstance(image_bytes, bytes):
             image = Image.open(BytesIO(image_bytes))
         else:
-            raise ValueError("Unexpected Hugging Face response format")
+            raise RuntimeError("Unexpected Hugging Face response format")
+
     except Exception as e:
         msg = str(e) or repr(e)
         logging.error(f"Hugging Face error: {msg}")
@@ -196,7 +204,6 @@ def output():
         result, status = generate_comic_pipeline(story, style)
         return jsonify(result), status
     except Exception as e:
-        import traceback
         tb = traceback.format_exc()
         logging.error(f"Unexpected server error:\n{tb}")
         return jsonify({

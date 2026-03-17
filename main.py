@@ -20,7 +20,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 app = Flask(__name__)
 CORS(app)
 
-# Initialize clients safely
+# Initialize clients
 hf_client = None
 gemini_client = None
 
@@ -64,7 +64,7 @@ def add_dialogue(image: Image.Image, dialogue: str) -> Image.Image:
     max_width = image.width - 60
 
     try:
-        font = ImageFont.truetype("arial.ttf", 25)
+        font = ImageFont.truetype("arial.ttf", 24)
     except:
         font = ImageFont.load_default()
 
@@ -78,10 +78,10 @@ def add_dialogue(image: Image.Image, dialogue: str) -> Image.Image:
 
     # Draw bubble
     draw.rounded_rectangle([bubble_x0, bubble_y0, bubble_x1, bubble_y1],
-                           radius=15, fill="white", outline="black", width=3)
+                           radius=15, fill="white", outline="black", width=2)
 
     # Bubble tail
-    tail_width, tail_height = 30, 20
+    tail_width, tail_height = 25, 15
     tail_x0 = bubble_x0 + bubble_x1 // 4
     tail_y0 = bubble_y1
     draw.polygon([(tail_x0, tail_y0),
@@ -141,18 +141,17 @@ def generate_image(panel, style):
     if not hf_client:
         raise RuntimeError("Hugging Face client not initialized or ACCESS_TOKEN missing")
 
-    width, height = 600, 400
+    width, height = 768, 512  # smaller size for faster response & lower payload
     STYLE_MAP = {
-        "cartoonish": "modern comic, bold outlines, vibrant cinematic lighting",
-        "soft": "watercolor illustration, pastel tones",
-        "dramatic": "cinematic lighting, high contrast shadows",
-        "manga": "black and white manga panel, screentones",
+        "cartoonish": "modern comic, bold outlines, vibrant cinematic lighting, highly detailed",
+        "soft": "watercolor illustration, pastel tones, highly detailed",
+        "dramatic": "cinematic lighting, high contrast shadows, highly detailed",
+        "manga": "black and white manga panel, screentones, highly detailed",
     }
 
     prompt = f"""
 {STYLE_MAP.get(style, STYLE_MAP['cartoonish'])},
-highly detailed, professional art,
-consistent character design,
+professional, cinematic, consistent character design,
 {panel.get('scene','')}
 """
 
@@ -160,9 +159,11 @@ consistent character design,
         image_bytes = hf_client.text_to_image(
             prompt=prompt,
             negative_prompt="blurry, distorted, bad anatomy",
-            model="stabilityai/stable-diffusion-xl-base-1.0",
+            model="stabilityai/stable-diffusion-xl-refiner-1.0",
             width=width,
             height=height,
+            steps=40,
+            guidance_scale=12
         )
         if isinstance(image_bytes, bytes):
             image = Image.open(BytesIO(image_bytes))
@@ -170,6 +171,9 @@ consistent character design,
             raise ValueError("Unexpected Hugging Face response format")
     except Exception as e:
         logging.error(f"Hugging Face image generation failed: {e}")
+        # Detect payment issues
+        if "402" in str(e) or "Payment Required" in str(e):
+            raise RuntimeError("Hugging Face account has depleted credits. Upgrade or buy more.")
         raise RuntimeError(f"Image generation failed: {str(e)}") from e
 
     try:
@@ -204,7 +208,6 @@ def output():
         return jsonify({"status": "success", **result})
 
     except RuntimeError as e:
-        # Our controlled error messages
         return jsonify({"status": "error", "message": str(e)}), 500
     except Exception as e:
         logging.exception("Unexpected server error")

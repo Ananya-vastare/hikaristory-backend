@@ -1,237 +1,229 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from huggingface_hub import InferenceClient
 from google import genai
-from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 import base64
-import requests
 import json
 import os
-import traceback
+import logging
+from dotenv import load_dotenv
 
-# --------------------------------
-# Load environment variables
-# --------------------------------
-
+# ================== SETUP ==================
 load_dotenv()
+logging.basicConfig(level=logging.INFO)
 
+HF_API_KEY = os.getenv("ACCESS_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-HF_TOKEN = os.getenv("ACCESS_TOKEN")
-
-if not GEMINI_API_KEY:
-    raise Exception("Missing GEMINI_API_KEY")
-
-if not HF_TOKEN:
-    raise Exception("Missing HF_TOKEN")
-
-# --------------------------------
-# Flask setup
-# --------------------------------
 
 app = Flask(__name__)
 CORS(app)
 
-# --------------------------------
-# Gemini client
-# --------------------------------
+hf_client = InferenceClient(api_key=HF_API_KEY) if HF_API_KEY else None
+gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
-# --------------------------------
-# HuggingFace API
-# --------------------------------
+# ================== UTIL ==================
+def encode_image(image: Image.Image) -> str:
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode()
 
-HF_MODEL_URL = "https://api-inference.huggingface.co/models/zhreyu/ComicStrips-Lora-Fluxdev"
 
-headers = {
-    "Authorization": f"Bearer {HF_TOKEN}"
-}
-
-# --------------------------------
-# Dialogue Bubble
-# --------------------------------
-
-def add_dialogue(image, text):
-
+# ================== TEXT BUBBLE ==================
+def add_dialogue(image: Image.Image, text: str) -> Image.Image:
     draw = ImageDraw.Draw(image)
 
     try:
-        font = ImageFont.truetype("arial.ttf", 28)
+        font = ImageFont.truetype("arial.ttf", 30)
     except:
         font = ImageFont.load_default()
 
-    bubble_x = 40
-    bubble_y = 40
-    bubble_w = 500
-    bubble_h = 200
-
-    draw.rectangle(
-        [bubble_x, bubble_y, bubble_x + bubble_w, bubble_y + bubble_h],
-        fill="white",
-        outline="black",
-        width=4
-    )
-
+    max_width = image.width - 100
     words = text.split()
+
     lines = []
-    line = ""
+    current = ""
 
     for word in words:
-
-        test = f"{line} {word}".strip()
-
+        test = f"{current} {word}".strip()
         bbox = draw.textbbox((0, 0), test, font=font)
 
-        if bbox[2] < bubble_w - 30:
-            line = test
+        if bbox[2] < max_width:
+            current = test
         else:
-            lines.append(line)
-            line = word
+            lines.append(current)
+            current = word
 
-    if line:
-        lines.append(line)
+    if current:
+        lines.append(current)
 
-    y = bubble_y + 20
+    text_height = len(lines) * 35 + 20
 
-    for l in lines:
-        draw.text((bubble_x + 15, y), l, fill="black", font=font)
-        y += 32
+    box = [
+        40,
+        image.height - text_height - 40,
+        image.width - 40,
+        image.height - 20,
+    ]
+
+    draw.rounded_rectangle(box, radius=20, fill=(255, 255, 255, 230))
+
+    y = box[1] + 10
+    for line in lines:
+        draw.text((box[0] + 20, y), line, fill="black", font=font)
+        y += 35
 
     return image
 
 
-# --------------------------------
-# Generate comic panels (Gemini)
-# --------------------------------
-
-def generate_story_panels(story):
+# ================== STORY ==================
+def generate_story(story_text):
+    if not gemini_client:
+        return None, "Gemini API key missing"
 
     prompt = f"""
-Create a 4 panel comic story.
+Create a 4-panel comic.
 
-Return JSON only.
+Rules:
+- Same character in all panels
+- Describe character in EACH panel
+- Cinematic scenes
+- Dialogue = 1 short sentence
+- Return ONLY JSON
 
 Format:
 {{
  "panels":[
-  {{"scene":"visual scene","dialogue":"dialogue"}},
-  {{"scene":"visual scene","dialogue":"dialogue"}},
-  {{"scene":"visual scene","dialogue":"dialogue"}},
-  {{"scene":"visual scene","dialogue":"dialogue"}}
+   {{"scene":"...", "dialogue":"..."}},
+   {{"scene":"...", "dialogue":"..."}},
+   {{"scene":"...", "dialogue":"..."}},
+   {{"scene":"...", "dialogue":"..."}}
  ]
 }}
 
-Story idea:
-{story}
+Story: {story_text}
 """
 
-    response = gemini_client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt
-    )
+    try:
+        res = gemini_client.models.generate_content(
+            model="gemini-2.5-flash", contents=prompt
+        )
 
-    text = response.text.strip()
+        text = res.text.strip()
 
-    if "```" in text:
-        text = text.split("```")[1].replace("json", "").strip()
+        if "```" in text:
+            text = text.split("```")[1].replace("json", "").strip()
 
-    data = json.loads(text)
+        data = json.loads(text)
+        return data["panels"], None
 
-    return data["panels"][:4]
+    except Exception as e:
+        logging.error(f"Gemini error: {str(e)}")
+        return None, "Story generation failed"
 
 
-# --------------------------------
-# Generate images via HuggingFace
-# --------------------------------
+# ================== IMAGE ==================
+def generate_image(panel, style):
 
-def generate_panel_images(panels):
+    if not hf_client:
+        return None, "HuggingFace API key missing"
+
+    STYLE_MAP = {
+        "cartoonish": "modern comic, bold outlines, vibrant cinematic lighting",
+        "soft": "watercolor illustration, pastel tones",
+        "dramatic": "cinematic lighting, high contrast shadows",
+        "manga": "black and white manga panel, screentones",
+    }
+
+    prompt = f"""
+{STYLE_MAP.get(style, STYLE_MAP['cartoonish'])},
+highly detailed, professional art,
+consistent character design,
+{panel['scene']}
+"""
+
+    try:
+        image = hf_client.text_to_image(
+            prompt=prompt,
+            negative_prompt="blurry, distorted, bad anatomy",
+            model="stabilityai/stable-diffusion-xl-base-1.0",
+            width=1024,
+            height=1024,
+        )
+
+    except Exception as e:
+        logging.warning("Turbo failed → fallback SDXL")
+
+        try:
+            image = hf_client.text_to_image(
+                prompt=prompt,
+                negative_prompt="blurry, distorted",
+                model="stabilityai/stable-diffusion-xl-base-1.0",
+                width=1024,
+                height=1024,
+            )
+        except Exception as e2:
+            logging.error(f"HF error: {str(e2)}")
+            return None, "Image generation failed"
+
+    try:
+        image = add_dialogue(image, panel["dialogue"])
+    except:
+        pass
+
+    return encode_image(image), None
+
+def generate_comic_pipeline(story, style):
+    panels, err = generate_story(story)
+    if err:
+        return None, err
 
     images = []
 
     for panel in panels:
+        logging.info(f"Generating: {panel['scene'][:40]}")
 
-        prompt = f"""
-Calvin and Hobbs comic strip,
-{panel['scene']}
-"""
+        img, err = generate_image(panel, style)
+        if err:
+            return None, err
 
-        payload = {"inputs": prompt}
+        images.append(img)
 
-        response = requests.post(
-            HF_MODEL_URL,
-            headers=headers,
-            json=payload
-        )
-
-        if response.status_code != 200:
-            raise Exception(f"HuggingFace error: {response.text}")
-
-        image = Image.open(BytesIO(response.content))
-
-        image = add_dialogue(image, panel["dialogue"])
-
-        buffer = BytesIO()
-        image.save(buffer, format="PNG")
-
-        img_base64 = base64.b64encode(buffer.getvalue()).decode()
-
-        images.append(img_base64)
-
-    return images
+    return {"panels": panels, "images": images}, None
 
 
-# --------------------------------
-# API endpoint
-# --------------------------------
-
+# ================== ROUTES ==================
 @app.route("/output", methods=["POST"])
-def generate_comic():
-
+def output():
     try:
-
         data = request.json
         story = data.get("text", "")
+        style = data.get("image_style", "cartoonish")
 
         if not story:
-            return jsonify({"error": "Story required"}), 400
+            return jsonify({"status": "error", "message": "No story provided"}), 400
 
-        panels = generate_story_panels(story)
+        result, err = generate_comic_pipeline(story, style)
 
-        images = generate_panel_images(panels)
+        if err:
+            return jsonify({"status": "error", "message": err}), 500
 
-        return jsonify({
-            "status": "success",
-            "panels": panels,
-            "images": images
-        })
+        return jsonify({"status": "success", **result})
 
     except Exception as e:
+        logging.exception("SERVER ERROR")
 
-        return jsonify({
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
-
-
-# --------------------------------
-# Health check
-# --------------------------------
+        return jsonify({"status": "error", "message": "Internal server error"}), 500
 
 @app.route("/")
-def home():
-    return "Comic API running"
-
-
-# --------------------------------
-# Run server (Render compatible)
-# --------------------------------
+def health():
+    return {
+        "status": "running",
+        "hf_loaded": bool(HF_API_KEY),
+        "gemini_loaded": bool(GEMINI_API_KEY),
+    }
 
 if __name__ == "__main__":
-
-    port = int(os.environ.get("PORT", 5000))
-
-    app.run(
-        host="0.0.0.0",
-        port=port
-    )
+    app.run(host="0.0.0.0", port=5000)

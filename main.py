@@ -129,12 +129,12 @@ Story: {story_text}
         logging.error(f"Gemini story generation failed: {e}")
         raise RuntimeError(f"Story generation failed: {str(e)}") from e
 
-# ================== IMAGE GENERATION ==================
+# ================== IMAGE GENERATION (FREE) ==================
 def generate_image(panel, style):
     if not hf_client:
         return {"error": "Hugging Face client not initialized or ACCESS_TOKEN missing"}, 500
 
-    width, height = 1024, 1024
+    width, height = 512, 512  # Free model resolution
     STYLE_MAP = {
         "cartoonish": "modern comic, bold outlines, vibrant cinematic lighting, highly detailed",
         "soft": "watercolor illustration, pastel tones, highly detailed",
@@ -151,7 +151,7 @@ professional, cinematic, consistent character design,
         image_bytes = hf_client.text_to_image(
             prompt=prompt,
             negative_prompt="blurry, distorted, bad anatomy",
-            model="stabilityai/stable-diffusion-xl-base-1.0",
+            model="prompthero/openjourney",  # FREE model
             width=width,
             height=height,
         )
@@ -162,8 +162,6 @@ professional, cinematic, consistent character design,
     except Exception as e:
         msg = str(e)
         logging.error(f"Hugging Face error: {msg}")
-        if "402" in msg or "Payment Required" in msg:
-            return {"error": msg}, 402
         return {"error": msg}, 500
 
     try:

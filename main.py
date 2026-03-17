@@ -36,7 +36,7 @@ def wrap_text(draw, text, font, max_width):
     for word in words:
         test = f"{current} {word}".strip()
         bbox = draw.textbbox((0, 0), test, font=font)
-        if bbox[2] < max_width:
+        if bbox[2] <= max_width:
             current = test
         else:
             lines.append(current)
@@ -45,68 +45,68 @@ def wrap_text(draw, text, font, max_width):
         lines.append(current)
     return lines
 
-# ================== DIALOGUE / DESCRIPTION ==================
 def add_description_and_dialogue(image: Image.Image, description: str, dialogue: str) -> Image.Image:
     draw = ImageDraw.Draw(image)
+    img_w, img_h = image.size
 
     # --- DESCRIPTION BOX ---
-    padding = 10
-    max_width = image.width - 60
-    desc_font_size = max(20, image.width // 40)
+    desc_font_size = max(30, img_w // 25)
     try:
         desc_font = ImageFont.truetype("arial.ttf", desc_font_size)
     except:
         desc_font = ImageFont.load_default()
 
+    padding = desc_font_size // 2
+    max_width = img_w - 100
+
     desc_lines = wrap_text(draw, description, desc_font, max_width)
     line_height = desc_font.getbbox("A")[3] - desc_font.getbbox("A")[1]
     desc_height = len(desc_lines) * line_height + padding * 2
-    desc_box = [30, 20, image.width - 30, 20 + desc_height]
+    desc_box = [50, 20, img_w - 50, 20 + desc_height]
     draw.rectangle(desc_box, fill="lightyellow", outline="black", width=3)
 
     y = desc_box[1] + padding
     for line in desc_lines:
         draw.text((desc_box[0] + padding, y), line, fill="black", font=desc_font)
-        y += line_height + 2
+        y += line_height + 5
 
     # --- DIALOGUE BUBBLE ---
-    dialogue_font_size = max(25, image.width // 30)
+    dialogue_font_size = max(40, img_w // 20)
     try:
         font = ImageFont.truetype("arial.ttf", dialogue_font_size)
     except:
         font = ImageFont.load_default()
 
-    lines = wrap_text(draw, dialogue, font, max_width)
+    bubble_padding = dialogue_font_size // 2
+    lines = wrap_text(draw, dialogue, font, max_width - 20)
     line_height = font.getbbox("A")[3] - font.getbbox("A")[1]
-    text_height = len(lines) * line_height + padding * 2
-    text_width = max(draw.textbbox((0, 0), line, font=font)[2] for line in lines) + padding * 2
+    text_height = len(lines) * line_height + bubble_padding * 2
+    text_width = max(draw.textbbox((0,0), line, font=font)[2] for line in lines) + bubble_padding * 2
 
-    bubble_x0 = 30
-    bubble_y0 = desc_box[3] + 20
+    bubble_x0 = 50
+    bubble_y0 = desc_box[3] + 40
     bubble_x1 = bubble_x0 + text_width
     bubble_y1 = bubble_y0 + text_height
 
-    # Draw rounded rectangle bubble
-    radius = 15
-    draw.rounded_rectangle([bubble_x0, bubble_y0, bubble_x1, bubble_y1],
-                           radius=radius, fill="white", outline="black", width=3)
+    # Draw ellipse bubble
+    draw.ellipse([bubble_x0, bubble_y0, bubble_x1, bubble_y1], fill="white", outline="black", width=4)
 
-    # Bubble tail
-    tail_width = 30
-    tail_height = 20
-    tail_x0 = bubble_x0 + bubble_x1 // 4
+    # Tail
+    tail_w = text_width // 4
+    tail_h = tail_w // 2
+    tail_x0 = bubble_x0 + tail_w
     tail_y0 = bubble_y1
     draw.polygon([
         (tail_x0, tail_y0),
-        (tail_x0 + tail_width, tail_y0),
-        (tail_x0 + tail_width // 2, tail_y0 + tail_height)
+        (tail_x0 + tail_w, tail_y0),
+        (tail_x0 + tail_w // 2, tail_y0 + tail_h)
     ], fill="white", outline="black")
 
-    # Draw text inside bubble
-    y = bubble_y0 + padding
+    # Draw dialogue text
+    y = bubble_y0 + bubble_padding
     for line in lines:
-        draw.text((bubble_x0 + padding, y), line, fill="black", font=font)
-        y += line_height + 2
+        draw.text((bubble_x0 + bubble_padding, y), line, fill="black", font=font)
+        y += line_height + 5
 
     return image
 
@@ -119,18 +119,18 @@ def generate_story(story_text):
 Create a 4-panel comic about this story: {story_text}
 
 Rules:
-- Use the SAME character in all panels
-- Describe the character once in detail
+- Same character in all panels
+- Describe the character once
 - Each panel has a cinematic scene and a 1-sentence dialogue
 - Return JSON ONLY
 
 Format:
 {{
- "character": "detailed description of the main character",
+ "character": "detailed description of main character",
  "panels":[
-   {{"scene":"...", "dialogue":"..."}} ,
-   {{"scene":"...", "dialogue":"..."}} ,
-   {{"scene":"...", "dialogue":"..."}} ,
+   {{"scene":"...", "dialogue":"..."}},
+   {{"scene":"...", "dialogue":"..."}},
+   {{"scene":"...", "dialogue":"..."}},
    {{"scene":"...", "dialogue":"..."}}
  ]
 }}
@@ -189,8 +189,11 @@ Scene: {panel['scene']}
             logging.error(f"HuggingFace error: {str(e2)}")
             return None, "Image generation failed"
 
+    # Add proper description + bubble
     try:
-        image = add_description_and_dialogue(image, panel.get("scene", ""), panel.get("dialogue", ""))
+        image = add_description_and_dialogue(
+            image, panel.get("scene", ""), panel.get("dialogue", "")
+        )
     except Exception as e:
         logging.warning(f"Failed to add dialogue: {str(e)}")
 

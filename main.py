@@ -24,25 +24,25 @@ hf_client = InferenceClient(api_key=HF_API_KEY) if HF_API_KEY else None
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 
-# ================== UTIL ==================
 def encode_image(image: Image.Image) -> str:
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode()
 
 
-# ================== TEXT BUBBLE ==================
 def add_dialogue(image: Image.Image, text: str) -> Image.Image:
     draw = ImageDraw.Draw(image)
 
     try:
-        font = ImageFont.truetype("arial.ttf", 30)
+        font = ImageFont.truetype("arial.ttf", 32)
     except:
         font = ImageFont.load_default()
 
-    max_width = image.width - 100
-    words = text.split()
+    # Bubble position (top area like comics)
+    padding = 20
+    max_width = image.width - 200
 
+    words = text.split()
     lines = []
     current = ""
 
@@ -59,26 +59,35 @@ def add_dialogue(image: Image.Image, text: str) -> Image.Image:
     if current:
         lines.append(current)
 
-    text_height = len(lines) * 35 + 20
+    text_height = len(lines) * 40 + padding * 2
 
+    # Speech bubble (top)
     box = [
-        40,
-        image.height - text_height - 40,
-        image.width - 40,
-        image.height - 20,
+        100,
+        50,
+        image.width - 100,
+        50 + text_height,
     ]
 
-    draw.rounded_rectangle(box, radius=20, fill=(255, 255, 255, 230))
+    # Bubble
+    draw.ellipse(box, fill="white", outline="black", width=3)
 
-    y = box[1] + 10
+    # Tail (speech pointer)
+    draw.polygon(
+        [(box[0] + 100, box[3]), (box[0] + 150, box[3]), (box[0] + 120, box[3] + 40)],
+        fill="white",
+        outline="black",
+    )
+
+    # Text
+    y = box[1] + padding
     for line in lines:
-        draw.text((box[0] + 20, y), line, fill="black", font=font)
-        y += 35
+        draw.text((box[0] + padding, y), line, fill="black", font=font)
+        y += 40
 
     return image
 
 
-# ================== STORY ==================
 def generate_story(story_text):
     if not gemini_client:
         return None, "Gemini API key missing"
@@ -108,7 +117,7 @@ Story: {story_text}
 
     try:
         res = gemini_client.models.generate_content(
-            model="gemini-2.5-flash-lite", contents=prompt
+            model="gemini-2.5-flash", contents=prompt
         )
 
         text = res.text.strip()
@@ -175,6 +184,8 @@ consistent character design,
 
     return encode_image(image), None
 
+
+# ================== PIPELINE ==================
 def generate_comic_pipeline(story, style):
     panels, err = generate_story(story)
     if err:
@@ -217,6 +228,7 @@ def output():
 
         return jsonify({"status": "error", "message": "Internal server error"}), 500
 
+
 @app.route("/")
 def health():
     return {
@@ -225,5 +237,7 @@ def health():
         "gemini_loaded": bool(GEMINI_API_KEY),
     }
 
+
+# ================== RUN ==================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)

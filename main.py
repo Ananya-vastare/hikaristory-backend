@@ -29,7 +29,6 @@ def encode_image(image: Image.Image) -> str:
     image.save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode()
 
-
 def wrap_text(draw, text, font, max_width):
     words = text.split()
     lines = []
@@ -46,14 +45,14 @@ def wrap_text(draw, text, font, max_width):
         lines.append(current)
     return lines
 
-
+# ================== DIALOGUE / DESCRIPTION ==================
 def add_description_and_dialogue(image: Image.Image, description: str, dialogue: str) -> Image.Image:
     draw = ImageDraw.Draw(image)
-    padding = 20
-    max_width = image.width - 200
 
     # --- DESCRIPTION BOX ---
-    desc_font_size = max(40, image.width // 20)
+    padding = 10
+    max_width = image.width - 60
+    desc_font_size = max(20, image.width // 40)
     try:
         desc_font = ImageFont.truetype("arial.ttf", desc_font_size)
     except:
@@ -61,38 +60,53 @@ def add_description_and_dialogue(image: Image.Image, description: str, dialogue:
 
     desc_lines = wrap_text(draw, description, desc_font, max_width)
     line_height = desc_font.getbbox("A")[3] - desc_font.getbbox("A")[1]
-    text_height = len(desc_lines) * line_height + padding * 2
-    box = [50, 20, image.width - 50, 20 + text_height]
-    draw.rectangle(box, fill="lightyellow", outline="black", width=3)
+    desc_height = len(desc_lines) * line_height + padding * 2
+    desc_box = [30, 20, image.width - 30, 20 + desc_height]
+    draw.rectangle(desc_box, fill="lightyellow", outline="black", width=3)
 
-    y = box[1] + padding
+    y = desc_box[1] + padding
     for line in desc_lines:
-        draw.text((box[0] + padding, y), line, fill="black", font=desc_font)
-        y += line_height + 5
+        draw.text((desc_box[0] + padding, y), line, fill="black", font=desc_font)
+        y += line_height + 2
 
     # --- DIALOGUE BUBBLE ---
-    dialogue_font_size = max(80, image.width // 10)
+    dialogue_font_size = max(25, image.width // 30)
     try:
         font = ImageFont.truetype("arial.ttf", dialogue_font_size)
     except:
         font = ImageFont.load_default()
 
-    lines = wrap_text(draw, dialogue, font, max_width - 40)
+    lines = wrap_text(draw, dialogue, font, max_width)
     line_height = font.getbbox("A")[3] - font.getbbox("A")[1]
     text_height = len(lines) * line_height + padding * 2
-    box = [80, 100, image.width - 80, 100 + text_height + 20]
+    text_width = max(draw.textbbox((0, 0), line, font=font)[2] for line in lines) + padding * 2
 
-    draw.ellipse(box, fill="white", outline="black", width=4)
-    draw.polygon(
-        [(box[0] + 100, box[3]), (box[0] + 200, box[3]), (box[0] + 150, box[3] + 50)],
-        fill="white",
-        outline="black"
-    )
+    bubble_x0 = 30
+    bubble_y0 = desc_box[3] + 20
+    bubble_x1 = bubble_x0 + text_width
+    bubble_y1 = bubble_y0 + text_height
 
-    y = box[1] + padding
+    # Draw rounded rectangle bubble
+    radius = 15
+    draw.rounded_rectangle([bubble_x0, bubble_y0, bubble_x1, bubble_y1],
+                           radius=radius, fill="white", outline="black", width=3)
+
+    # Bubble tail
+    tail_width = 30
+    tail_height = 20
+    tail_x0 = bubble_x0 + bubble_x1 // 4
+    tail_y0 = bubble_y1
+    draw.polygon([
+        (tail_x0, tail_y0),
+        (tail_x0 + tail_width, tail_y0),
+        (tail_x0 + tail_width // 2, tail_y0 + tail_height)
+    ], fill="white", outline="black")
+
+    # Draw text inside bubble
+    y = bubble_y0 + padding
     for line in lines:
-        draw.text((box[0] + padding, y), line, fill="black", font=font)
-        y += line_height + 10
+        draw.text((bubble_x0 + padding, y), line, fill="black", font=font)
+        y += line_height + 2
 
     return image
 
@@ -114,14 +128,13 @@ Format:
 {{
  "character": "detailed description of the main character",
  "panels":[
-   {{"scene":"...", "dialogue":"..."}},
-   {{"scene":"...", "dialogue":"..."}},
-   {{"scene":"...", "dialogue":"..."}},
+   {{"scene":"...", "dialogue":"..."}} ,
+   {{"scene":"...", "dialogue":"..."}} ,
+   {{"scene":"...", "dialogue":"..."}} ,
    {{"scene":"...", "dialogue":"..."}}
  ]
 }}
 """
-
     try:
         res = gemini_client.models.generate_content(
             model="gemini-2.5-flash", contents=prompt
@@ -154,7 +167,6 @@ consistent character design,
 Character: {character_desc}
 Scene: {panel['scene']}
 """
-
     try:
         image = hf_client.text_to_image(
             prompt=prompt,

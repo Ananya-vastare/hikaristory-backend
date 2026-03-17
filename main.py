@@ -8,6 +8,7 @@ import base64
 import json
 import os
 import logging
+
 from dotenv import load_dotenv
 
 # ================== SETUP ==================

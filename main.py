@@ -39,7 +39,7 @@ def add_dialogue_bubble(image: Image.Image, dialogue: str) -> Image.Image:
 
     # BIGGER FONT
     try:
-        font = ImageFont.truetype("arial.ttf", 60)  # increased from 40 → 60
+        font = ImageFont.truetype("arial.ttf",50)  # increased from 40 → 60
     except:
         font = ImageFont.load_default()
 

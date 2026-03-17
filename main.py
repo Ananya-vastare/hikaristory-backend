@@ -49,11 +49,11 @@ def wrap_text(draw, text, font, max_width):
 
 def add_description_and_dialogue(image: Image.Image, description: str, dialogue: str) -> Image.Image:
     draw = ImageDraw.Draw(image)
-    padding = 15
+    padding = 20
     max_width = image.width - 200
 
     # --- DESCRIPTION BOX ---
-    desc_font_size = max(30, image.width // 25)
+    desc_font_size = max(40, image.width // 20)
     try:
         desc_font = ImageFont.truetype("arial.ttf", desc_font_size)
     except:
@@ -71,16 +71,16 @@ def add_description_and_dialogue(image: Image.Image, description: str, dialogue:
         y += line_height + 5
 
     # --- DIALOGUE BUBBLE ---
-    dialogue_font_size = max(50, image.width // 15)
+    dialogue_font_size = max(80, image.width // 10)
     try:
         font = ImageFont.truetype("arial.ttf", dialogue_font_size)
     except:
         font = ImageFont.load_default()
 
-    lines = wrap_text(draw, dialogue, font, max_width)
+    lines = wrap_text(draw, dialogue, font, max_width - 40)
     line_height = font.getbbox("A")[3] - font.getbbox("A")[1]
     text_height = len(lines) * line_height + padding * 2
-    box = [80, 100, image.width - 80, 100 + text_height]
+    box = [80, 100, image.width - 80, 100 + text_height + 20]
 
     draw.ellipse(box, fill="white", outline="black", width=4)
     draw.polygon(

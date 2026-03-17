@@ -24,86 +24,59 @@ CORS(app)
 hf_client = InferenceClient(api_key=HF_API_KEY)
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Optimized prompt
+# 🎬 CINEMATIC REALISTIC STYLE (NO CARTOON)
 FIXED_ART_PROMPT = (
-    "ultra-detailed animated movie still, cinematic lighting, "
-    "dynamic pose, vibrant colors, soft lighting, high quality"
+    "cinematic film still, ultra realistic, hollywood movie scene, "
+    "dramatic lighting, depth of field, 35mm photography, sharp focus, "
+    "high detail skin texture, realistic environment, volumetric lighting, "
+    "award winning photography, not cartoon, not anime"
 )
 
 # ----------------------------
-# Dialogue Bubble (Stable)
+# 🎬 Subtitle Style Dialogue (Clean & Cinematic)
 # ----------------------------
-def add_dialogue_bubble(image: Image.Image, dialogue: str) -> Image.Image:
+def add_dialogue_subtitle(image: Image.Image, dialogue: str) -> Image.Image:
     if not dialogue:
         return image
 
     draw = ImageDraw.Draw(image)
-
-    # Safe font (works on Vercel)
     font = ImageFont.load_default()
 
-    words = dialogue.split()
-    lines = []
-    current = ""
+    x = 20
+    y = image.height - 40
 
-    max_width = 500
-
-    for word in words:
-        test = f"{current} {word}".strip() if current else word
-        bbox = draw.textbbox((0, 0), test, font=font)
-
-        if bbox[2] - bbox[0] <= max_width:
-            current = test
-        else:
-            lines.append(current)
-            current = word
-
-    if current:
-        lines.append(current)
-
-    padding = 20
-    line_height = 25
-
-    bubble_width = max(
-        draw.textbbox((0, 0), line, font=font)[2] for line in lines
-    ) + padding * 2
-
-    bubble_height = len(lines) * line_height + padding * 2
-
-    bubble_x, bubble_y = 20, 20
-
-    draw.rectangle(
-        [
-            bubble_x,
-            bubble_y,
-            bubble_x + bubble_width,
-            bubble_y + bubble_height,
-        ],
-        fill=(255, 255, 255),
-        outline=(0, 0, 0),
-        width=2,
+    draw.text(
+        (x, y),
+        dialogue,
+        fill="white",
+        font=font,
+        stroke_width=2,
+        stroke_fill="black"
     )
-
-    y = bubble_y + padding
-    for line in lines:
-        draw.text((bubble_x + padding, y), line, fill="black", font=font)
-        y += line_height
 
     return image
 
 
 # ----------------------------
-# Gemini Story Generation
+# Gemini Story Generation (4 panels)
 # ----------------------------
 def generate_story_panels(story: str):
     prompt = f"""
-Create a 2-panel cinematic animated story.
+Create a 4-panel cinematic realistic story.
 
-Return JSON ONLY:
+Rules:
+- Same characters across all panels
+- Each panel progresses logically
+- Each panel must include:
+    scene + dialogue
+
+Return ONLY JSON:
 {{
  "panels":[
-  {{"scene":"description","dialogue":"text"}},
-  {{"scene":"description","dialogue":"text"}}
+  {{"scene":"...","dialogue":"..."}},
+  {{"scene":"...","dialogue":"..."}},
+  {{"scene":"...","dialogue":"..."}},
+  {{"scene":"...","dialogue":"..."}}
  ]
 }}
 
@@ -126,7 +99,7 @@ Story:
 
         data = json.loads(match.group(0))
 
-        return data["panels"], None
+        return data["panels"][:4], None
 
     except Exception as e:
         print("GEMINI ERROR:", e)
@@ -134,25 +107,31 @@ Story:
 
 
 # ----------------------------
-# Image Generation (LIGHTWEIGHT)
+# Image Generation (500x500, optimized)
 # ----------------------------
 def generate_panel_images(panels: list):
     images = []
 
     try:
         for panel in panels:
-            prompt = f"{FIXED_ART_PROMPT}, {panel.get('scene','')}"
+            prompt = (
+                f"{FIXED_ART_PROMPT}, realistic humans, natural lighting, "
+                f"{panel.get('scene','')}"
+            )
 
             image = hf_client.text_to_image(
                 prompt,
                 model="stabilityai/stable-diffusion-xl-base-1.0",
-                width=512,   # reduced
-                height=512,
-                guidance_scale=10.0,
-                num_inference_steps=30,  # reduced
+                width=500,
+                height=500,
+                guidance_scale=12.0,
+                num_inference_steps=40,
             )
 
-            image = add_dialogue_bubble(image, panel.get("dialogue", ""))
+            # Add subtitle (not comic bubble)
+            image = add_dialogue_subtitle(
+                image, panel.get("dialogue", "")
+            )
 
             buffer = BytesIO()
             image.save(buffer, format="PNG")

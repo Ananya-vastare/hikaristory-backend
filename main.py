@@ -74,11 +74,8 @@ def add_dialogue(image: Image.Image, dialogue: str) -> Image.Image:
     bubble_x1 = bubble_x0 + max([draw.textbbox((0, 0), line, font=font)[2] for line in lines]) + padding*2
     bubble_y1 = bubble_y0 + text_height
 
-    # Draw bubble
     draw.rounded_rectangle([bubble_x0, bubble_y0, bubble_x1, bubble_y1],
                            radius=15, fill="white", outline="black", width=2)
-
-    # Draw bubble tail
     tail_width, tail_height = 25, 15
     tail_x0 = bubble_x0 + bubble_x1 // 4
     tail_y0 = bubble_y1
@@ -86,8 +83,6 @@ def add_dialogue(image: Image.Image, dialogue: str) -> Image.Image:
                   (tail_x0 + tail_width, tail_y0),
                   (tail_x0 + tail_width // 2, tail_y0 + tail_height)],
                  fill="white", outline="black")
-
-    # Draw text
     y = bubble_y0 + padding
     for line in lines:
         draw.text((bubble_x0 + padding, y), line, fill="black", font=font)
@@ -134,7 +129,7 @@ Story: {story_text}
         logging.error(f"Gemini story generation failed: {e}")
         raise RuntimeError(f"Story generation failed: {str(e)}") from e
 
-# ================== IMAGE GENERATION ==================
+# ================== IMAGE GENERATION (RAW HF ERROR) ==================
 def generate_image(panel, style):
     if not hf_client:
         return {"error": "Hugging Face client not initialized or ACCESS_TOKEN missing"}, 500
@@ -165,29 +160,25 @@ professional, cinematic, consistent character design,
         else:
             raise ValueError("Unexpected Hugging Face response format")
     except Exception as e:
-        logging.error(f"Hugging Face image generation failed: {e}")
-        msg = str(e)
-        if "402" in msg or "Payment Required" in msg:
-            return {"error": "Hugging Face account has depleted credits. Upgrade or buy more."}, 402
-        return {"error": f"Image generation failed: {msg}"}, 500
+        # RETURN EXACT RAW HF ERROR
+        logging.error(f"Hugging Face error: {e}")
+        return {"error": str(e)}, 500
 
     try:
         return encode_image(add_dialogue(image, panel.get("dialogue", ""))), 200
     except Exception as e:
-        logging.error(f"Adding dialogue failed: {e}")
+        logging.error(f"Dialogue overlay failed: {e}")
         return {"error": f"Dialogue overlay failed: {str(e)}"}, 500
 
 # ================== PIPELINE ==================
 def generate_comic_pipeline(story, style):
     panels = generate_story(story)
     images = []
-
     for idx, panel in enumerate(panels, start=1):
         img_result, status = generate_image(panel, style)
         if status != 200:
-            return {"status": "error", "message": img_result.get("error", "Unknown error")}, status
+            return {"status": "error", "message": img_result.get("error")}, status
         images.append(img_result)
-
     return {"status": "success", "panels": panels, "images": images}, 200
 
 # ================== ROUTES ==================
@@ -205,7 +196,7 @@ def output():
         return jsonify(result), status
     except Exception as e:
         logging.exception("Unexpected server error")
-        return jsonify({"status": "error", "message": "Unexpected server error"}), 500
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route("/")
 def health():

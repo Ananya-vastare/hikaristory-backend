@@ -20,9 +20,21 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 app = Flask(__name__)
 CORS(app)
 
-# Initialize clients
-hf_client = InferenceClient(api_key=HF_API_KEY) if HF_API_KEY else None
-gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+# Initialize clients safely
+hf_client = None
+gemini_client = None
+
+if HF_API_KEY:
+    try:
+        hf_client = InferenceClient(api_key=HF_API_KEY)
+    except Exception as e:
+        logging.error(f"Failed to initialize Hugging Face client: {e}")
+
+if GEMINI_API_KEY:
+    try:
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+    except Exception as e:
+        logging.error(f"Failed to initialize Gemini client: {e}")
 
 # ================== UTILITIES ==================
 def encode_image(image: Image.Image) -> str:
@@ -88,7 +100,7 @@ def add_dialogue(image: Image.Image, dialogue: str) -> Image.Image:
 # ================== STORY GENERATION ==================
 def generate_story(story_text):
     if not gemini_client:
-        raise ValueError("Gemini API key missing or client not initialized")
+        raise RuntimeError("Gemini client not initialized or GEMINI_API_KEY missing")
 
     prompt = f"""
 Create a 4-panel comic.
@@ -117,18 +129,19 @@ Story: {story_text}
         if "```" in text:
             text = text.split("```")[1].replace("json", "").strip()
         data = json.loads(text)
+        if "panels" not in data or not isinstance(data["panels"], list):
+            raise ValueError("Invalid response structure from Gemini")
         return data["panels"]
     except Exception as e:
-        logging.error(f"Gemini error: {str(e)}")
-        raise RuntimeError("Story generation failed") from e
+        logging.error(f"Gemini story generation failed: {e}")
+        raise RuntimeError(f"Story generation failed: {str(e)}") from e
 
 # ================== IMAGE GENERATION ==================
 def generate_image(panel, style):
-    width, height = 600, 400
-
     if not hf_client:
-        raise ValueError("Hugging Face API key missing or client not initialized")
+        raise RuntimeError("Hugging Face client not initialized or ACCESS_TOKEN missing")
 
+    width, height = 600, 400
     STYLE_MAP = {
         "cartoonish": "modern comic, bold outlines, vibrant cinematic lighting",
         "soft": "watercolor illustration, pastel tones",
@@ -140,35 +153,39 @@ def generate_image(panel, style):
 {STYLE_MAP.get(style, STYLE_MAP['cartoonish'])},
 highly detailed, professional art,
 consistent character design,
-{panel['scene']}
+{panel.get('scene','')}
 """
 
     try:
-        image = hf_client.text_to_image(
+        image_bytes = hf_client.text_to_image(
             prompt=prompt,
             negative_prompt="blurry, distorted, bad anatomy",
             model="stabilityai/stable-diffusion-xl-base-1.0",
             width=width,
             height=height,
         )
-        if isinstance(image, bytes):
-            image = Image.open(BytesIO(image))
+        if isinstance(image_bytes, bytes):
+            image = Image.open(BytesIO(image_bytes))
+        else:
+            raise ValueError("Unexpected Hugging Face response format")
     except Exception as e:
-        logging.error(f"Hugging Face image generation failed: {str(e)}")
-        raise RuntimeError("Hugging Face image generation failed") from e
+        logging.error(f"Hugging Face image generation failed: {e}")
+        raise RuntimeError(f"Image generation failed: {str(e)}") from e
 
-    # Add dialogue (will raise if fails)
-    return encode_image(add_dialogue(image, panel.get("dialogue", ""))), None
+    try:
+        return encode_image(add_dialogue(image, panel.get("dialogue", "")))
+    except Exception as e:
+        logging.error(f"Adding dialogue failed: {e}")
+        raise RuntimeError(f"Dialogue overlay failed: {str(e)}") from e
 
 # ================== PIPELINE ==================
 def generate_comic_pipeline(story, style):
     panels = generate_story(story)
     images = []
 
-    for panel in panels:
-        logging.info(f"Generating panel: {panel.get('scene','')[:40]}...")
-        img, _ = generate_image(panel, style)
-        images.append(img)
+    for idx, panel in enumerate(panels, start=1):
+        logging.info(f"Generating panel {idx}: {panel.get('scene','')[:40]}...")
+        images.append(generate_image(panel, style))
 
     return {"panels": panels, "images": images}
 
@@ -177,7 +194,7 @@ def generate_comic_pipeline(story, style):
 def output():
     try:
         data = request.json
-        story = data.get("text", "")
+        story = data.get("text", "").strip()
         style = data.get("image_style", "cartoonish")
 
         if not story:
@@ -186,18 +203,20 @@ def output():
         result = generate_comic_pipeline(story, style)
         return jsonify({"status": "success", **result})
 
-    except Exception as e:
-        logging.exception("SERVER ERROR")
+    except RuntimeError as e:
+        # Our controlled error messages
         return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as e:
+        logging.exception("Unexpected server error")
+        return jsonify({"status": "error", "message": "Unexpected server error"}), 500
 
 @app.route("/")
 def health():
     return {
         "status": "running",
-        "hf_loaded": bool(HF_API_KEY),
-        "gemini_loaded": bool(GEMINI_API_KEY),
+        "hf_loaded": hf_client is not None,
+        "gemini_loaded": gemini_client is not None,
     }
 
-# ================== RUN ==================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)

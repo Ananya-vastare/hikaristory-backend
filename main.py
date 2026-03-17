@@ -10,40 +10,60 @@ import json
 import os
 import re
 
-# Load environment variables
+# ----------------------------
+# 🔐 Load Environment Variables
+# ----------------------------
 load_dotenv()
+
 HF_API_KEY = os.getenv("ACCESS_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not HF_API_KEY or not GEMINI_API_KEY:
-    raise Exception("Missing API keys in environment variables")
+    raise Exception("❌ Missing API keys in environment variables")
 
+# ----------------------------
+# 🚀 App Init
+# ----------------------------
 app = Flask(__name__)
 CORS(app)
 
 hf_client = InferenceClient(api_key=HF_API_KEY)
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
-# 🎬 CINEMATIC REALISTIC STYLE (NO CARTOON)
-FIXED_ART_PROMPT = (
-    "cinematic film still, ultra realistic, hollywood movie scene, "
-    "dramatic lighting, depth of field, 35mm photography, sharp focus, "
-    "high detail skin texture, realistic environment, volumetric lighting, "
-    "award winning photography, not cartoon, not anime"
+# ----------------------------
+# 🎨 COMIC STYLE PROMPT (FIXED)
+# ----------------------------
+COMIC_STYLE_PROMPT = (
+    "pop art comic style, retro comic book illustration, "
+    "bold black outlines, halftone dots, vibrant colors, "
+    "dramatic expression, highly detailed face, "
+    "vintage 1960s comic style, Roy Lichtenstein inspired, "
+    "flat shading, high contrast, clean lines, "
+    "comic panel, dynamic composition, expressive emotions, "
+    "pop art explosion background"
+)
+
+NEGATIVE_PROMPT = (
+    "realistic photo, blurry, low quality, 3d render, dull colors, "
+    "bad anatomy, extra limbs, distorted face"
 )
 
 # ----------------------------
-# 🎬 Subtitle Style Dialogue (Clean & Cinematic)
+# 💬 Add Comic Subtitle (Simple)
 # ----------------------------
 def add_dialogue_subtitle(image: Image.Image, dialogue: str) -> Image.Image:
     if not dialogue:
         return image
 
     draw = ImageDraw.Draw(image)
-    font = ImageFont.load_default()
+
+    try:
+        font = ImageFont.truetype("arial.ttf", 18)
+    except:
+        font = ImageFont.load_default()
 
     x = 20
-    y = image.height - 40
+    y = image.height - 60
 
     draw.text(
         (x, y),
@@ -58,17 +78,18 @@ def add_dialogue_subtitle(image: Image.Image, dialogue: str) -> Image.Image:
 
 
 # ----------------------------
-# Gemini Story Generation (4 panels)
+# 🧠 Generate Story Panels (Gemini)
 # ----------------------------
 def generate_story_panels(story: str):
     prompt = f"""
-Create a 4-panel cinematic realistic story.
+Create a 4-panel comic story.
 
 Rules:
 - Same characters across all panels
 - Each panel progresses logically
+- Keep scenes visually descriptive for image generation
 - Each panel must include:
-    scene + dialogue
+    scene + short dialogue (1 line max)
 
 Return ONLY JSON:
 {{
@@ -92,7 +113,6 @@ Story:
 
         text = response.text.strip()
 
-        # Extract JSON safely
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if not match:
             raise Exception("Invalid JSON from Gemini")
@@ -102,12 +122,12 @@ Story:
         return data["panels"][:4], None
 
     except Exception as e:
-        print("GEMINI ERROR:", e)
+        print("❌ GEMINI ERROR:", e)
         return None, str(e)
 
 
 # ----------------------------
-# Image Generation (500x500, optimized)
+# 🎨 Generate Comic Images
 # ----------------------------
 def generate_panel_images(panels: list):
     images = []
@@ -115,22 +135,24 @@ def generate_panel_images(panels: list):
     try:
         for panel in panels:
             prompt = (
-                f"{FIXED_ART_PROMPT}, realistic humans, natural lighting, "
-                f"{panel.get('scene','')}"
+                f"{COMIC_STYLE_PROMPT}, "
+                f"{panel.get('scene', '')}, "
+                "close-up shot, expressive face"
             )
 
             image = hf_client.text_to_image(
-                prompt,
+                prompt=prompt,
+                negative_prompt=NEGATIVE_PROMPT,
                 model="stabilityai/stable-diffusion-xl-base-1.0",
-                width=500,
-                height=500,
-                guidance_scale=12.0,
-                num_inference_steps=40,
+                width=768,
+                height=768,
+                guidance_scale=8.5,
+                num_inference_steps=50,
             )
 
-            # Add subtitle (not comic bubble)
             image = add_dialogue_subtitle(
-                image, panel.get("dialogue", "")
+                image,
+                panel.get("dialogue", "")
             )
 
             buffer = BytesIO()
@@ -143,18 +165,24 @@ def generate_panel_images(panels: list):
         return images, None
 
     except Exception as e:
-        print("HF ERROR:", e)
+        print("❌ HF ERROR:", e)
         return None, str(e)
 
 
 # ----------------------------
-# Routes
+# 🏠 Health Check
 # ----------------------------
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"message": "Server is running"})
+    return jsonify({
+        "status": "running",
+        "message": "🎨 Comic Generator API is live"
+    })
 
 
+# ----------------------------
+# 🎬 Main Endpoint
+# ----------------------------
 @app.route("/output", methods=["POST"])
 def generate_comic():
     try:
@@ -167,6 +195,7 @@ def generate_comic():
                 "message": "No storyline provided"
             }), 400
 
+        # 🧠 Generate story
         panels, gem_error = generate_story_panels(story)
         if gem_error:
             return jsonify({
@@ -175,6 +204,7 @@ def generate_comic():
                 "error": gem_error
             }), 500
 
+        # 🎨 Generate images
         images, hf_error = generate_panel_images(panels)
         if hf_error:
             return jsonify({
@@ -183,6 +213,7 @@ def generate_comic():
                 "error": hf_error
             }), 500
 
+        # 📦 Combine results
         result = [
             {
                 "scene": p["scene"],
@@ -198,7 +229,7 @@ def generate_comic():
         })
 
     except Exception as e:
-        print("SERVER ERROR:", e)
+        print("❌ SERVER ERROR:", e)
         return jsonify({
             "status": "error",
             "message": str(e)
@@ -206,7 +237,7 @@ def generate_comic():
 
 
 # ----------------------------
-# Local Run
+# ▶️ Run Server
 # ----------------------------
 if __name__ == "__main__":
     app.run(debug=True, port=5000)

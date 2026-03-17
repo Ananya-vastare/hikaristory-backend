@@ -33,15 +33,15 @@ def encode_image(image: Image.Image) -> str:
 def add_dialogue(image: Image.Image, text: str) -> Image.Image:
     draw = ImageDraw.Draw(image)
 
-    # Font size scales with image width
-    font_size = max(40, image.width // 15)  # e.g., 1024px → ~68px
+    # BIG FONT: scale with image width (makes it huge on large panels)
+    font_size = max(80, image.width // 12)  # 1024px → ~85px font
     try:
         font = ImageFont.truetype("arial.ttf", font_size)
     except:
         font = ImageFont.load_default()
 
-    padding = 20
-    max_width = image.width - 200
+    padding = 30
+    max_width = image.width - 150  # leave some margin
 
     # Wrap text into multiple lines
     words = text.split()
@@ -58,28 +58,28 @@ def add_dialogue(image: Image.Image, text: str) -> Image.Image:
     if current:
         lines.append(current)
 
-    # Calculate dynamic text height
+    # Line height based on font
     line_height = font.getbbox("A")[3] - font.getbbox("A")[1]
     text_height = len(lines) * line_height + padding * 2
 
-    # Bubble coordinates
-    box = [100, 50, image.width - 100, 50 + text_height]
+    # Bubble coordinates (top of panel)
+    box = [80, 50, image.width - 80, 50 + text_height]
 
-    # Draw ellipse bubble
-    draw.ellipse(box, fill="white", outline="black", width=3)
+    # Draw bubble
+    draw.ellipse(box, fill="white", outline="black", width=4)
 
-    # Draw speech tail
+    # Draw tail
     draw.polygon(
-        [(box[0] + 100, box[3]), (box[0] + 150, box[3]), (box[0] + 120, box[3] + 40)],
+        [(box[0] + 100, box[3]), (box[0] + 200, box[3]), (box[0] + 150, box[3] + 50)],
         fill="white",
         outline="black"
     )
 
-    # Draw text
+    # Draw text lines
     y = box[1] + padding
     for line in lines:
         draw.text((box[0] + padding, y), line, fill="black", font=font)
-        y += line_height
+        y += line_height + 10  # add extra spacing
 
     return image
 

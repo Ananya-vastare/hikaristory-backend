@@ -20,6 +20,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 app = Flask(__name__)
 CORS(app)
 
+# Initialize clients
 hf_client = InferenceClient(api_key=HF_API_KEY) if HF_API_KEY else None
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
@@ -87,7 +88,7 @@ def add_dialogue(image: Image.Image, dialogue: str) -> Image.Image:
 # ================== STORY GENERATION ==================
 def generate_story(story_text):
     if not gemini_client:
-        return None, "Gemini API key missing"
+        raise ValueError("Gemini API key missing or client not initialized")
 
     prompt = f"""
 Create a 4-panel comic.
@@ -102,10 +103,7 @@ Rules:
 Format:
 {{
  "panels":[
-   {{"scene":"...", "dialogue":"..."}},
-   {{"scene":"...", "dialogue":"..."}},
-   {{"scene":"...", "dialogue":"..."}},
-   {{"scene":"...", "dialogue":"..."}}
+   {{"scene":"...", "dialogue":"..."}} x4
  ]
 }}
 
@@ -119,20 +117,17 @@ Story: {story_text}
         if "```" in text:
             text = text.split("```")[1].replace("json", "").strip()
         data = json.loads(text)
-        return data["panels"], None
+        return data["panels"]
     except Exception as e:
         logging.error(f"Gemini error: {str(e)}")
-        return None, "Story generation failed"
+        raise RuntimeError("Story generation failed") from e
 
 # ================== IMAGE GENERATION ==================
 def generate_image(panel, style):
-    width, height = 600, 400  # safe image size
+    width, height = 600, 400
 
     if not hf_client:
-        # fallback simple image
-        image = Image.new("RGB", (width, height), color="skyblue")
-        image = add_dialogue(image, panel.get("dialogue", ""))
-        return encode_image(image), None
+        raise ValueError("Hugging Face API key missing or client not initialized")
 
     STYLE_MAP = {
         "cartoonish": "modern comic, bold outlines, vibrant cinematic lighting",
@@ -156,35 +151,26 @@ consistent character design,
             width=width,
             height=height,
         )
+        if isinstance(image, bytes):
+            image = Image.open(BytesIO(image))
     except Exception as e:
-        logging.warning(f"HF image generation failed: {str(e)}. Using placeholder.")
-        image = Image.new("RGB", (width, height), color="skyblue")
+        logging.error(f"Hugging Face image generation failed: {str(e)}")
+        raise RuntimeError("Hugging Face image generation failed") from e
 
-    # Add dialogue safely
-    try:
-        image = add_dialogue(image, panel.get("dialogue", ""))
-    except Exception as e:
-        logging.warning(f"Failed to add dialogue: {str(e)}")
-
-    return encode_image(image), None
+    # Add dialogue (will raise if fails)
+    return encode_image(add_dialogue(image, panel.get("dialogue", ""))), None
 
 # ================== PIPELINE ==================
 def generate_comic_pipeline(story, style):
-    panels, err = generate_story(story)
-    if err:
-        return None, err
-
+    panels = generate_story(story)
     images = []
+
     for panel in panels:
         logging.info(f"Generating panel: {panel.get('scene','')[:40]}...")
-        try:
-            img, _ = generate_image(panel, style)
-        except Exception as e:
-            logging.warning(f"Panel generation failed, using placeholder: {str(e)}")
-            img = encode_image(Image.new("RGB", (600, 400), color="skyblue"))
+        img, _ = generate_image(panel, style)
         images.append(img)
 
-    return {"panels": panels, "images": images}, None
+    return {"panels": panels, "images": images}
 
 # ================== ROUTES ==================
 @app.route("/output", methods=["POST"])
@@ -197,15 +183,12 @@ def output():
         if not story:
             return jsonify({"status": "error", "message": "No story provided"}), 400
 
-        result, err = generate_comic_pipeline(story, style)
-        if err:
-            return jsonify({"status": "error", "message": err}), 500
-
+        result = generate_comic_pipeline(story, style)
         return jsonify({"status": "success", **result})
 
     except Exception as e:
         logging.exception("SERVER ERROR")
-        return jsonify({"status": "error", "message": "Internal server error"}), 500
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route("/")
 def health():

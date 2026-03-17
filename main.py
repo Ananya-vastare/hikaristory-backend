@@ -129,12 +129,12 @@ Story: {story_text}
         logging.error(f"Gemini story generation failed: {e}")
         raise RuntimeError(f"Story generation failed: {str(e)}") from e
 
-# ================== IMAGE GENERATION (RAW HF ERROR) ==================
+# ================== IMAGE GENERATION ==================
 def generate_image(panel, style):
     if not hf_client:
         return {"error": "Hugging Face client not initialized or ACCESS_TOKEN missing"}, 500
 
-    width, height = 768, 512
+    width, height = 1024, 1024
     STYLE_MAP = {
         "cartoonish": "modern comic, bold outlines, vibrant cinematic lighting, highly detailed",
         "soft": "watercolor illustration, pastel tones, highly detailed",
@@ -151,7 +151,7 @@ professional, cinematic, consistent character design,
         image_bytes = hf_client.text_to_image(
             prompt=prompt,
             negative_prompt="blurry, distorted, bad anatomy",
-            model="stabilityai/stable-diffusion-xl-refiner-1.0",
+            model="stabilityai/stable-diffusion-xl-1024-v1-0",
             width=width,
             height=height,
         )
@@ -160,15 +160,17 @@ professional, cinematic, consistent character design,
         else:
             raise ValueError("Unexpected Hugging Face response format")
     except Exception as e:
-        # RETURN EXACT RAW HF ERROR
-        logging.error(f"Hugging Face error: {e}")
-        return {"error": str(e)}, 500
+        msg = str(e)
+        logging.error(f"Hugging Face error: {msg}")
+        if "402" in msg or "Payment Required" in msg:
+            return {"error": msg}, 402
+        return {"error": msg}, 500
 
     try:
         return encode_image(add_dialogue(image, panel.get("dialogue", ""))), 200
     except Exception as e:
         logging.error(f"Dialogue overlay failed: {e}")
-        return {"error": f"Dialogue overlay failed: {str(e)}"}, 500
+        return {"error": str(e)}, 500
 
 # ================== PIPELINE ==================
 def generate_comic_pipeline(story, style):

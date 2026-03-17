@@ -108,7 +108,7 @@ Story: {story_text}
 
     try:
         res = gemini_client.models.generate_content(
-            model="gemini-2.5-flash", contents=prompt
+            model="gemini-2.5-pro", contents=prompt
         )
 
         text = res.text.strip()

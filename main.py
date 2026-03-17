@@ -8,7 +8,6 @@ import base64
 import json
 import os
 import logging
-
 from dotenv import load_dotenv
 
 # ================== SETUP ==================
@@ -130,12 +129,12 @@ Story: {story_text}
         logging.error(f"Gemini story generation failed: {e}")
         raise RuntimeError(f"Story generation failed: {str(e)}") from e
 
-# ================== IMAGE GENERATION (FREE) ==================
+# ================== IMAGE GENERATION ==================
 def generate_image(panel, style):
     if not hf_client:
         return {"error": "Hugging Face client not initialized or ACCESS_TOKEN missing"}, 500
 
-    width, height = 512, 512  # Free model resolution
+    width, height = 512, 512  # Free resolution
     STYLE_MAP = {
         "cartoonish": "modern comic, bold outlines, vibrant cinematic lighting, highly detailed",
         "soft": "watercolor illustration, pastel tones, highly detailed",
@@ -149,10 +148,11 @@ professional, cinematic, consistent character design,
 {panel.get('scene', '')}
 """
     try:
+        # FREE Hugging Face model
         image_bytes = hf_client.text_to_image(
             prompt=prompt,
             negative_prompt="blurry, distorted, bad anatomy",
-            model="prompthero/openjourney",  # FREE model
+            model="prompthero/openjourney",
             width=width,
             height=height,
         )
@@ -161,7 +161,7 @@ professional, cinematic, consistent character design,
         else:
             raise ValueError("Unexpected Hugging Face response format")
     except Exception as e:
-        msg = str(e)
+        msg = str(e) or repr(e)
         logging.error(f"Hugging Face error: {msg}")
         return {"error": msg}, 500
 
@@ -196,8 +196,14 @@ def output():
         result, status = generate_comic_pipeline(story, style)
         return jsonify(result), status
     except Exception as e:
-        logging.exception("Unexpected server error")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        import traceback
+        tb = traceback.format_exc()
+        logging.error(f"Unexpected server error:\n{tb}")
+        return jsonify({
+            "status": "error",
+            "message": str(e) or "Unknown error occurred",
+            "trace": tb
+        }), 500
 
 @app.route("/")
 def health():

@@ -138,10 +138,11 @@ def generate_panel_images(panels: list):
         print("HF ERROR:", e)
         return None, "HF_GENERATION_ERROR"
 
-@app.route("/",method=["GET"]):
-    return(
-        jsonify({{"message":"Everything is happening"}})
-    )
+
+@app.route("/", method=["GET"])
+def home():
+    return jsonify({{"message": "Everything is happening"}})
+
 
 @app.route("/output", methods=["POST"])
 def generate_comic():

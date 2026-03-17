@@ -124,7 +124,7 @@ def generate_panel_images(panels: list):
                 width=1024,  # high-res for premium quality
                 height=1024,
                 guidance_scale=15.0,
-                num_inference_steps=150,
+                num_inference_steps=30,
             )
 
             # Optional dialogue bubble

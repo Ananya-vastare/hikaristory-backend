@@ -30,20 +30,7 @@ def encode_image(image: Image.Image) -> str:
     return base64.b64encode(buffer.getvalue()).decode()
 
 
-def add_dialogue(image: Image.Image, text: str) -> Image.Image:
-    draw = ImageDraw.Draw(image)
-
-    # BIG FONT: scale with image width (makes it huge on large panels)
-    font_size = max(80, image.width // 12)  # 1024px → ~85px font
-    try:
-        font = ImageFont.truetype("arial.ttf", font_size)
-    except:
-        font = ImageFont.load_default()
-
-    padding = 30
-    max_width = image.width - 150  # leave some margin
-
-    # Wrap text into multiple lines
+def wrap_text(draw, text, font, max_width):
     words = text.split()
     lines = []
     current = ""
@@ -57,55 +44,82 @@ def add_dialogue(image: Image.Image, text: str) -> Image.Image:
             current = word
     if current:
         lines.append(current)
+    return lines
 
-    # Line height based on font
+
+def add_description_and_dialogue(image: Image.Image, description: str, dialogue: str) -> Image.Image:
+    draw = ImageDraw.Draw(image)
+    padding = 15
+    max_width = image.width - 200
+
+    # --- DESCRIPTION BOX ---
+    desc_font_size = max(30, image.width // 25)
+    try:
+        desc_font = ImageFont.truetype("arial.ttf", desc_font_size)
+    except:
+        desc_font = ImageFont.load_default()
+
+    desc_lines = wrap_text(draw, description, desc_font, max_width)
+    line_height = desc_font.getbbox("A")[3] - desc_font.getbbox("A")[1]
+    text_height = len(desc_lines) * line_height + padding * 2
+    box = [50, 20, image.width - 50, 20 + text_height]
+    draw.rectangle(box, fill="lightyellow", outline="black", width=3)
+
+    y = box[1] + padding
+    for line in desc_lines:
+        draw.text((box[0] + padding, y), line, fill="black", font=desc_font)
+        y += line_height + 5
+
+    # --- DIALOGUE BUBBLE ---
+    dialogue_font_size = max(50, image.width // 15)
+    try:
+        font = ImageFont.truetype("arial.ttf", dialogue_font_size)
+    except:
+        font = ImageFont.load_default()
+
+    lines = wrap_text(draw, dialogue, font, max_width)
     line_height = font.getbbox("A")[3] - font.getbbox("A")[1]
     text_height = len(lines) * line_height + padding * 2
+    box = [80, 100, image.width - 80, 100 + text_height]
 
-    # Bubble coordinates (top of panel)
-    box = [80, 50, image.width - 80, 50 + text_height]
-
-    # Draw bubble
     draw.ellipse(box, fill="white", outline="black", width=4)
-
-    # Draw tail
     draw.polygon(
         [(box[0] + 100, box[3]), (box[0] + 200, box[3]), (box[0] + 150, box[3] + 50)],
         fill="white",
         outline="black"
     )
 
-    # Draw text lines
     y = box[1] + padding
     for line in lines:
         draw.text((box[0] + padding, y), line, fill="black", font=font)
-        y += line_height + 10  # add extra spacing
+        y += line_height + 10
 
     return image
 
 # ================== STORY GENERATION ==================
 def generate_story(story_text):
     if not gemini_client:
-        return None, "Gemini API key missing"
+        return None, None, "Gemini API key missing"
 
     prompt = f"""
-Create a 4-panel comic.
+Create a 4-panel comic about this story: {story_text}
 
 Rules:
-- Same character in all panels
-- Describe character in EACH panel
-- Cinematic scenes
-- Dialogue = 1 short sentence
-- Return ONLY JSON
+- Use the SAME character in all panels
+- Describe the character once in detail
+- Each panel has a cinematic scene and a 1-sentence dialogue
+- Return JSON ONLY
 
 Format:
 {{
+ "character": "detailed description of the main character",
  "panels":[
-   {{"scene":"...", "dialogue":"..."}} × 4
+   {{"scene":"...", "dialogue":"..."}},
+   {{"scene":"...", "dialogue":"..."}},
+   {{"scene":"...", "dialogue":"..."}},
+   {{"scene":"...", "dialogue":"..."}}
  ]
 }}
-
-Story: {story_text}
 """
 
     try:
@@ -116,13 +130,13 @@ Story: {story_text}
         if "```" in text:
             text = text.split("```")[1].replace("json", "").strip()
         data = json.loads(text)
-        return data["panels"], None
+        return data["character"], data["panels"], None
     except Exception as e:
         logging.error(f"Gemini error: {str(e)}")
-        return None, "Story generation failed"
+        return None, None, "Story generation failed"
 
 # ================== IMAGE GENERATION ==================
-def generate_image(panel, style):
+def generate_image(panel, character_desc, style):
     if not hf_client:
         return None, "HuggingFace API key missing"
 
@@ -137,7 +151,8 @@ def generate_image(panel, style):
 {STYLE_MAP.get(style, STYLE_MAP['cartoonish'])},
 highly detailed, professional art,
 consistent character design,
-{panel['scene']}
+Character: {character_desc}
+Scene: {panel['scene']}
 """
 
     try:
@@ -149,7 +164,7 @@ consistent character design,
             height=1024
         )
     except Exception as e:
-        logging.warning("Primary model failed, retrying SDXL")
+        logging.warning(f"Primary model failed, retrying: {str(e)}")
         try:
             image = hf_client.text_to_image(
                 prompt=prompt,
@@ -162,9 +177,8 @@ consistent character design,
             logging.error(f"HuggingFace error: {str(e2)}")
             return None, "Image generation failed"
 
-    # Add dialogue
     try:
-        image = add_dialogue(image, panel["dialogue"])
+        image = add_description_and_dialogue(image, panel.get("scene", ""), panel.get("dialogue", ""))
     except Exception as e:
         logging.warning(f"Failed to add dialogue: {str(e)}")
 
@@ -172,19 +186,19 @@ consistent character design,
 
 # ================== PIPELINE ==================
 def generate_comic_pipeline(story, style):
-    panels, err = generate_story(story)
+    character_desc, panels, err = generate_story(story)
     if err:
         return None, err
 
     images = []
     for panel in panels:
         logging.info(f"Generating image: {panel['scene'][:40]}...")
-        img, err = generate_image(panel, style)
+        img, err = generate_image(panel, character_desc, style)
         if err:
             return None, err
         images.append(img)
 
-    return {"panels": panels, "images": images}, None
+    return {"character": character_desc, "panels": panels, "images": images}, None
 
 # ================== ROUTES ==================
 @app.route("/output", methods=["POST"])

@@ -32,72 +32,45 @@ FIXED_ART_PROMPT = (
 
 
 def add_dialogue_bubble(image: Image.Image, dialogue: str) -> Image.Image:
+    """Optional subtle dialogue bubble."""
     if not dialogue:
         return image
-
     draw = ImageDraw.Draw(image)
-
-    # BIGGER FONT
     try:
-        font = ImageFont.truetype("arial.ttf",50)  # increased from 40 → 60
+        font = ImageFont.truetype("arial.ttf", 30)
     except:
         font = ImageFont.load_default()
 
     words = dialogue.split()
-    lines = []
-    current = ""
-
-    max_width = 700  # increased width
-
-    # Wrap text
+    lines, current = [], ""
+    max_width = 400
     for word in words:
         test = f"{current} {word}".strip() if current else word
         bbox = draw.textbbox((0, 0), test, font=font)
-
-        if bbox[2] - bbox[0] <= max_width:
+        if bbox[2] - bbox[0] < max_width:
             current = test
         else:
             lines.append(current)
             current = word
-
     if current:
         lines.append(current)
 
-    # BIGGER PADDING + SPACING
-    line_height = 70
-    padding = 30
+    bubble_width = max(draw.textbbox((0, 0), line, font=font)[2] for line in lines) + 25
+    bubble_height = len(lines) * 28 + 30
+    bubble_x, bubble_y = 20, 20
 
-    bubble_width = max(
-        draw.textbbox((0, 0), line, font=font)[2] for line in lines
-    ) + padding * 2
-
-    bubble_height = len(lines) * line_height + padding * 2
-
-    bubble_x, bubble_y = 30, 30
-
-    # STRONGER BACKGROUND (more visible)
+    # Semi-transparent, subtle, cinematic dialogue bubble
     draw.rectangle(
-        [
-            bubble_x,
-            bubble_y,
-            bubble_x + bubble_width,
-            bubble_y + bubble_height,
-        ],
-        fill=(255, 255, 255, 230),  # more solid white
-        outline=(0, 0, 0),
-        width=4,
+        [bubble_x, bubble_y, bubble_x + bubble_width, bubble_y + bubble_height],
+        fill=(255, 255, 255, 180),
+        outline=(50, 50, 50),
+        width=3,
     )
 
-    # Draw text
-    y = bubble_y + padding
+    y = bubble_y + 5
     for line in lines:
-        draw.text(
-            (bubble_x + padding, y),
-            line,
-            fill=(0, 0, 0),
-            font=font,
-        )
-        y += line_height
+        draw.text((bubble_x + 10, y), line, fill="black", font=font)
+        y += 28
 
     return image
 
@@ -165,10 +138,12 @@ def generate_panel_images(panels: list):
         print("HF ERROR:", e)
         return None, "HF_GENERATION_ERROR"
 
-@app.route("/", methods=["GET"])
+
+@app.route("/", method=["GET"])
 def home():
-    return jsonify({"message": "Server is up and running"})
-    
+    return jsonify({{"message": "Everything is happening"}})
+
+
 @app.route("/output", methods=["POST"])
 def generate_comic():
     data = request.json
